@@ -1,0 +1,92 @@
+{% extends "facturation/base.html" %}
+{% block title %}Nouvelle facture{% endblock %}
+{% block content %}
+<h1 class="h3 mb-3">{% if form.initial.reference %}Nouvel avoir{% else %}Nouvelle facture{% endif %}</h1>
+<form method="post">
+  {% csrf_token %}
+  {{ form.non_field_errors }}
+  <div class="card mb-3"><div class="card-header">Qui émet, pour qui ?</div><div class="card-body"><div class="row">
+    <div class="col-md-6">{% with field=form.company %}{% include "facturation/_field.html" %}{% endwith %}</div>
+    <div class="col-md-6">
+      {% with field=form.client %}{% include "facturation/_field.html" %}{% endwith %}
+      <a class="small" href="{% url 'client_create' %}?next={% url 'invoice_create' %}">+ Ajouter un nouveau client</a>
+    </div>
+  </div></div></div>
+
+  <div class="card mb-3"><div class="card-header">Facture</div><div class="card-body"><div class="row">
+    <div class="col-md-4">{% with field=form.type %}{% include "facturation/_field.html" %}{% endwith %}</div>
+    <div class="col-md-5">{% with field=form.reference %}{% include "facturation/_field.html" %}{% endwith %}</div>
+    <div class="col-md-3">{% with field=form.aib %}{% include "facturation/_field.html" %}{% endwith %}</div>
+  </div></div></div>
+
+  <div class="card mb-3"><div class="card-header d-flex justify-content-between">
+    <span>Articles (prix TTC)</span>
+    <button type="button" id="items-add" class="btn btn-sm btn-outline-primary">+ Ajouter une ligne</button>
+  </div><div class="card-body">
+    {{ items.management_form }}
+    {{ items.non_form_errors }}
+    <table class="table align-middle">
+      <thead><tr><th>Désignation</th><th>Prix unitaire</th><th>Qté</th><th>Taxe</th><th></th></tr></thead>
+      <tbody id="items-rows">{% for f in items %}{% include "facturation/_item_row.html" with form=f %}{% endfor %}</tbody>
+    </table>
+    <div class="text-end fw-bold">Total TTC : <span id="total">0</span> FCFA</div>
+    <template id="items-empty">{% include "facturation/_item_row.html" with form=items.empty_form %}</template>
+  </div></div>
+
+  <div class="card mb-3"><div class="card-header d-flex justify-content-between">
+    <span>Paiements <small class="text-muted">(laisser vide = espèces pour le total)</small></span>
+    <button type="button" id="pays-add" class="btn btn-sm btn-outline-primary">+ Ajouter un paiement</button>
+  </div><div class="card-body">
+    {{ pays.management_form }}
+    <table class="table align-middle">
+      <thead><tr><th>Mode</th><th>Montant</th><th></th></tr></thead>
+      <tbody id="pays-rows">{% for f in pays %}{% include "facturation/_pay_row.html" with form=f %}{% endfor %}</tbody>
+    </table>
+    <template id="pays-empty">{% include "facturation/_pay_row.html" with form=pays.empty_form %}</template>
+  </div></div>
+
+  <div class="form-check mb-3">
+    {{ form.confirm_now }}
+    <label class="form-check-label" for="{{ form.confirm_now.id_for_label }}">{{ form.confirm_now.label }}</label>
+  </div>
+  <button class="btn btn-primary">Envoyer à la DGI</button>
+  <a class="btn btn-link" href="{% url 'invoice_list' %}">Annuler</a>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function setupFormset(prefix) {
+  const total = document.getElementById('id_' + prefix + '-TOTAL_FORMS');
+  const body = document.getElementById(prefix + '-rows');
+  const tpl = document.getElementById(prefix + '-empty').innerHTML;
+  document.getElementById(prefix + '-add').addEventListener('click', () => {
+    const idx = parseInt(total.value, 10);
+    body.insertAdjacentHTML('beforeend', tpl.replace(/__prefix__/g, idx));
+    total.value = idx + 1;
+    updateTotal();
+  });
+  body.addEventListener('click', (e) => {
+    const btn = e.target.closest('.remove-row');
+    if (!btn) return;
+    const row = btn.closest('tr');
+    row.querySelector('input[type=checkbox][name$="-DELETE"]').checked = true;
+    row.classList.add('d-none');
+    updateTotal();
+  });
+}
+function updateTotal() {
+  let sum = 0;
+  document.querySelectorAll('#items-rows tr:not(.d-none)').forEach((tr) => {
+    const p = parseFloat(tr.querySelector('input[name$="-price"]').value) || 0;
+    const q = parseFloat(tr.querySelector('input[name$="-quantity"]').value) || 0;
+    sum += p * q;
+  });
+  document.getElementById('total').textContent = Math.round(sum).toLocaleString('fr-FR');
+}
+setupFormset('items');
+setupFormset('pays');
+document.getElementById('items-rows').addEventListener('input', updateTotal);
+updateTotal();
+</script>
+{% endblock %}

@@ -1,0 +1,44 @@
+{% extends "facturation/base.html" %}
+{% block title %}Clients{% endblock %}
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+  <h1 class="h3 m-0">Clients</h1>
+  <a href="{% url 'client_create' %}" class="btn btn-primary">+ Ajouter un client</a>
+</div>
+<form class="mb-3" method="get">
+  <div class="input-group">
+    <input class="form-control" name="q" value="{{ q }}" placeholder="Rechercher par raison sociale, IFU ou contact…">
+    <button class="btn btn-outline-secondary">Rechercher</button>
+  </div>
+</form>
+
+<div class="row g-3">
+  {% for c in clients %}
+  <div class="col-md-6 col-lg-4">
+    <div class="card h-100 shadow-sm">
+      <div class="card-body">
+        <h2 class="h5 card-title">{{ c.name }}</h2>
+        <p class="mb-1"><b>IFU :</b> {{ c.ifu|default:"—" }}</p>
+        <p class="mb-1"><b>Contact :</b> {{ c.contact|default:"—" }}</p>
+        <p class="mb-2"><b>Adresse :</b> {{ c.address|default:"—"|linebreaksbr }}</p>
+        <span class="badge bg-light text-dark border">{{ c.nb_invoices }} facture{{ c.nb_invoices|pluralize }}</span>
+      </div>
+      <div class="card-footer bg-white d-flex flex-wrap gap-2">
+        <a class="btn btn-sm btn-primary" href="{% url 'invoice_create' %}?client={{ c.pk }}">Facturer</a>
+        <a class="btn btn-sm btn-outline-secondary" href="{% url 'client_edit' c.pk %}">Modifier</a>
+        <form method="post" action="{% url 'client_delete' c.pk %}" class="ms-auto"
+              onsubmit="return confirm('Supprimer ce client ? Les factures déjà émises sont conservées.');">
+          {% csrf_token %}
+          <button class="btn btn-sm btn-outline-danger">Supprimer</button>
+        </form>
+      </div>
+    </div>
+  </div>
+  {% empty %}
+  <div class="col-12"><div class="alert alert-info mb-0">
+    Aucun client{% if q %} ne correspond à « {{ q }} »{% endif %}.
+    <a href="{% url 'client_create' %}">Ajouter un client</a>.
+  </div></div>
+  {% endfor %}
+</div>
+{% endblock %}

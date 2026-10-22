@@ -1,0 +1,16 @@
+{% extends "facturation/base.html" %}
+{% block title %}Infos API{% endblock %}
+{% block content %}
+<h1 class="h3 mb-3">Informations de l'API e-MCF</h1>
+<form method="get" class="row g-2 mb-3 align-items-center">
+  <div class="col-auto"><label class="col-form-label" for="company">Société :</label></div>
+  <div class="col-md-5"><select class="form-select" id="company" name="company" onchange="this.form.submit()">
+    {% for c in companies %}<option value="{{ c.pk }}" {% if c.pk == company.pk %}selected{% endif %}>{{ c.name }} ({{ c.env_label }})</option>{% endfor %}
+  </select></div>
+</form>
+{% for e in errors %}<div class="alert alert-danger">{{ e }}</div>{% endfor %}
+{% for title, content in blocks %}
+  <div class="card mb-3"><div class="card-header">{{ title }}</div>
+    <div class="card-body"><pre class="m-0 small">{{ content }}</pre></div></div>
+{% endfor %}
+{% endblock %}

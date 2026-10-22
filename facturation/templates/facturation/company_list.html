@@ -1,0 +1,39 @@
+{% extends "facturation/base.html" %}
+{% block title %}Sociétés{% endblock %}
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+  <h1 class="h3 m-0">Sociétés émettrices</h1>
+  <a href="{% url 'company_create' %}" class="btn btn-primary">+ Ajouter une société</a>
+</div>
+<div class="row g-3">
+  {% for c in companies %}
+  <div class="col-md-6 col-lg-4">
+    <div class="card h-100 shadow-sm" style="border-top:4px solid {{ c.accent_color }}">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-start mb-2">
+          <h2 class="h5 card-title m-0">{{ c.name }}</h2>
+          <span class="badge {% if c.is_prod %}bg-danger{% else %}bg-info text-dark{% endif %}">{{ c.env_label }}</span>
+        </div>
+        {% if c.logo %}<img src="{{ c.logo.url }}" alt="" height="48" class="mb-2 d-block">{% endif %}
+        <p class="mb-1"><b>IFU :</b> {% if c.ifu %}{{ c.ifu }}{% else %}<span class="text-danger">à renseigner</span>{% endif %}</p>
+        <p class="mb-1"><b>Téléphone :</b> {{ c.phone|default:"—" }}</p>
+        <p class="mb-2"><b>Adresse :</b> {{ c.address|default:"—"|linebreaksbr }}</p>
+        <p class="mb-0 small text-muted">
+          Jeton : {% if c.emcf_token %}propre à cette société{% else %}celui du fichier .env{% endif %}
+          · {{ c.nb_invoices }} facture{{ c.nb_invoices|pluralize }}
+        </p>
+      </div>
+      <div class="card-footer bg-white d-flex flex-wrap gap-2">
+        <a class="btn btn-sm btn-primary" href="{% url 'invoice_create' %}?company={{ c.pk }}">Facturer</a>
+        <a class="btn btn-sm btn-outline-secondary" href="{% url 'company_edit' c.pk %}">Modifier</a>
+        <a class="btn btn-sm btn-outline-dark" href="{% url 'api_info' %}?company={{ c.pk }}">Tester la connexion</a>
+      </div>
+    </div>
+  </div>
+  {% empty %}
+  <div class="col-12"><div class="alert alert-info mb-0">
+    Aucune société. <a href="{% url 'company_create' %}">Ajouter la première société</a>.
+  </div></div>
+  {% endfor %}
+</div>
+{% endblock %}

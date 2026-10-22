@@ -1,0 +1,40 @@
+{% extends "facturation/base.html" %}
+{% load facturation_extras %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h1 class="h3 m-0">Tableau de bord</h1>
+  <a href="{% url 'invoice_create' %}" class="btn btn-primary">+ Nouvelle facture</a>
+</div>
+<div class="row g-3 mb-4">
+  <div class="col-md-4"><div class="card text-center"><div class="card-body">
+    <div class="display-6">{{ counts.pending }}</div>En attente</div></div></div>
+  <div class="col-md-4"><div class="card text-center"><div class="card-body">
+    <div class="display-6">{{ counts.confirmed }}</div>Confirmées</div></div></div>
+  <div class="col-md-4"><div class="card text-center"><div class="card-body">
+    <div class="display-6">{{ counts.cancelled }}</div>Annulées</div></div></div>
+</div>
+
+<div class="card mb-4"><div class="card-header d-flex justify-content-between">
+  <span>Sociétés émettrices</span>
+  <span class="text-muted small">{{ nb_clients }} client{{ nb_clients|pluralize }} enregistré{{ nb_clients|pluralize }}</span>
+</div>
+<ul class="list-group list-group-flush">
+  {% for c in companies %}
+  <li class="list-group-item d-flex flex-wrap justify-content-between align-items-center gap-2">
+    <span><b>{{ c.name }}</b>
+      <span class="badge {% if c.is_prod %}bg-danger{% else %}bg-info text-dark{% endif %} ms-1">{{ c.env_label }}</span>
+      <span class="text-muted small ms-2">{{ c.nb_invoices }} facture{{ c.nb_invoices|pluralize }}</span></span>
+    <span class="d-flex gap-2">
+      <a class="btn btn-sm btn-primary" href="{% url 'invoice_create' %}?company={{ c.pk }}">Facturer</a>
+      <a class="btn btn-sm btn-outline-dark" href="{% url 'api_info' %}?company={{ c.pk }}">Tester la connexion</a>
+    </span>
+  </li>
+  {% empty %}
+  <li class="list-group-item">Aucune société. <a href="{% url 'company_create' %}">Ajouter une société</a>.</li>
+  {% endfor %}
+</ul></div>
+
+<div class="card"><div class="card-header">Dernières factures</div>
+  {% include "facturation/_invoice_table.html" with invoices=recent %}
+</div>
+{% endblock %}

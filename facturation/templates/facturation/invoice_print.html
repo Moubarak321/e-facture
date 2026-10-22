@@ -1,0 +1,105 @@
+{% load facturation_extras %}<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>{{ invoice.get_type_display }} {{ invoice.number|default:invoice.uid }}</title>
+<style>
+  :root { --accent: {{ company.accent_color }}; }
+  * { box-sizing: border-box; }
+  body { font-family: Arial, Helvetica, sans-serif; font-size: 13px; color: #222; margin: 0; background: #eee; }
+  .page { width: 210mm; min-height: 297mm; margin: 10px auto; padding: 15mm; background: #fff; position: relative; }
+  header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 3px solid var(--accent); padding-bottom: 10px; }
+  header img { max-height: 80px; max-width: 220px; }
+  .company { text-align: right; line-height: 1.5; }
+  .company h1 { margin: 0 0 4px; font-size: 18px; color: var(--accent); }
+  h2 { color: var(--accent); margin: 18px 0 4px; font-size: 20px; text-transform: uppercase; }
+  .meta { display: flex; justify-content: space-between; gap: 20px; margin: 12px 0; }
+  .box { border: 1px solid #ccc; padding: 8px 10px; flex: 1; line-height: 1.5; }
+  table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+  th { background: var(--accent); color: #fff; text-align: left; padding: 6px; }
+  td { padding: 6px; border-bottom: 1px solid #ddd; }
+  .r { text-align: right; }
+  .totals { width: 55%; margin-left: auto; }
+  .totals td { border: none; padding: 3px 6px; }
+  .grand td { font-weight: bold; font-size: 15px; border-top: 2px solid var(--accent); }
+  .security { margin-top: 20px; display: flex; gap: 16px; align-items: center; border: 2px solid var(--accent); padding: 10px; }
+  .security img { width: 110px; height: 110px; }
+  .warn { background: #fff3cd; border: 2px solid #e0a800; padding: 8px; text-align: center; font-weight: bold; margin: 10px 0; }
+  .cancelled { background: #f8d7da; border-color: #c82333; }
+  footer { margin-top: 20px; font-size: 11px; color: #555; border-top: 1px solid #ccc; padding-top: 8px; white-space: pre-line; }
+  .toolbar { text-align: center; padding: 10px; }
+  @media print { body { background: #fff; } .page { margin: 0; box-shadow: none; } .toolbar { display: none; } }
+</style>
+</head>
+<body>
+<div class="toolbar"><button onclick="window.print()">Imprimer / Enregistrer en PDF</button></div>
+<div class="page">
+  <header>
+    <div>{% if company.logo %}<img src="{{ company.logo.url }}" alt="{{ company.name }}">{% endif %}</div>
+    <div class="company">
+      <h1>{{ company.name }}</h1>
+      {% if company.address %}{{ company.address|linebreaksbr }}<br>{% endif %}
+      {% if company.phone %}Tél : {{ company.phone }}<br>{% endif %}
+      {% if company.email %}{{ company.email }}<br>{% endif %}
+      {% if company.website %}{{ company.website }}<br>{% endif %}
+      {% if company.ifu %}IFU : {{ company.ifu }}{% endif %}{% if company.rccm %} · RCCM : {{ company.rccm }}{% endif %}
+    </div>
+  </header>
+
+  <h2>{{ invoice.get_type_display }}{% if invoice.number %} n° {{ invoice.number }}{% endif %}</h2>
+
+  {% if invoice.status == 'pending' %}
+    <div class="warn">FACTURE NON CONFIRMÉE : document sans valeur fiscale tant qu'elle n'est pas confirmée auprès de la DGI.</div>
+  {% elif invoice.status == 'cancelled' %}
+    <div class="warn cancelled">FACTURE ANNULÉE</div>
+  {% endif %}
+
+  <div class="meta">
+    <div class="box"><b>Date :</b> {{ invoice.created_at|date:"d/m/Y H:i" }}<br>
+      {% if invoice.reference %}<b>Avoir sur facture (UID) :</b> {{ invoice.reference }}<br>{% endif %}
+      <b>UID :</b> {{ invoice.uid }}</div>
+    <div class="box"><b>Client</b><br>
+      {{ invoice.client_name|default:"—" }}<br>
+      {% if invoice.client_ifu %}IFU : {{ invoice.client_ifu }}<br>{% endif %}
+      {% if invoice.client_contact %}{{ invoice.client_contact }}<br>{% endif %}
+      {{ invoice.client_address|linebreaksbr }}</div>
+  </div>
+
+  <table>
+    <thead><tr><th>Désignation</th><th class="r">Prix unit. TTC</th><th class="r">Qté</th><th>Taxe</th><th class="r">Total TTC</th></tr></thead>
+    <tbody>
+    {% for it in invoice.items.all %}
+      <tr><td>{{ it.name }}</td><td class="r">{{ it.price|money }}</td><td class="r">{{ it.quantity|floatformat:"-3" }}</td>
+          <td>{{ it.tax_group }}</td><td class="r">{{ it.line_total|money }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+
+  <table class="totals">
+    {% for g in tax_summary %}
+      <tr><td>Groupe {{ g.group }} ({{ g.rate }} %) : HT {{ g.ht|money }}</td><td class="r">TVA {{ g.tax|money }}</td></tr>
+    {% endfor %}
+    <tr class="grand"><td>TOTAL TTC (FCFA)</td><td class="r">{{ invoice.total|money }}</td></tr>
+    {% for p in invoice.payments.all %}
+      <tr><td>{{ p.get_method_display }}</td><td class="r">{{ p.amount|money }}</td></tr>
+    {% endfor %}
+  </table>
+
+  {% if invoice.security %}
+  <div class="security">
+    {% if qr %}<img src="{{ qr }}" alt="QR code">{% endif %}
+    <div>
+      <b>Éléments de sécurité (DGI)</b><br>
+      Code MECeF/DGI : {{ invoice.number }}<br>
+      NIM : {{ invoice.nim }}<br>
+      Compteurs : {{ invoice.counters }}<br>
+      Date/heure : {{ invoice.security_date }}
+    </div>
+  </div>
+  {% endif %}
+
+  {% if company.bank_details %}<footer><b>Coordonnées bancaires</b><br>{{ company.bank_details }}</footer>{% endif %}
+  {% if company.footer_text %}<footer>{{ company.footer_text }}</footer>{% endif %}
+</div>
+</body>
+</html>

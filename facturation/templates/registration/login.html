@@ -1,0 +1,16 @@
+{% extends "facturation/base.html" %}
+{% block title %}Connexion{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-md-4">
+    <div class="card shadow-sm"><div class="card-body">
+      <h1 class="h4 mb-3">Connexion</h1>
+      <form method="post">
+        {% csrf_token %}
+        {% for field in form %}{% include "facturation/_field.html" %}{% endfor %}
+        <button class="btn btn-primary w-100">Se connecter</button>
+      </form>
+    </div></div>
+  </div>
+</div>
+{% endblock %}

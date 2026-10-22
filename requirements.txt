@@ -1,0 +1,14 @@
+asgiref==3.12.1
+certifi==2026.10.19
+charset-normalizer==3.5.2
+colorama==0.4.6
+Django==5.2.18
+gunicorn==26.2.0
+idna==3.20
+pillow==13.0.0
+python-dotenv==1.2.4
+qrcode==8.2
+requests==2.34.2
+sqlparse==0.6.0
+tzdata==2026.5
+urllib3==2.8.0

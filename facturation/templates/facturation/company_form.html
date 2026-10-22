@@ -1,0 +1,42 @@
+{% extends "facturation/base.html" %}
+{% block title %}{% if company %}Modifier la société{% else %}Nouvelle société{% endif %}{% endblock %}
+{% block content %}
+<h1 class="h3 mb-3">{% if company %}Modifier « {{ company.name }} »{% else %}Nouvelle société{% endif %}</h1>
+<p class="text-muted">Le logo et les coordonnées sont imprimés sur les factures émises par cette société.</p>
+<form method="post" enctype="multipart/form-data" class="card card-body">
+  {% csrf_token %}
+  {{ form.non_field_errors }}
+  <div class="row">
+    <div class="col-md-6">{% with field=form.name %}{% include "facturation/_field.html" %}{% endwith %}</div>
+    <div class="col-md-6">
+      {% with field=form.logo %}{% include "facturation/_field.html" %}{% endwith %}
+    </div>
+    <div class="col-md-6">{% with field=form.ifu %}{% include "facturation/_field.html" %}{% endwith %}</div>
+    <div class="col-md-6">{% with field=form.rccm %}{% include "facturation/_field.html" %}{% endwith %}</div>
+    <div class="col-12">{% with field=form.address %}{% include "facturation/_field.html" %}{% endwith %}</div>
+    <div class="col-md-4">{% with field=form.phone %}{% include "facturation/_field.html" %}{% endwith %}</div>
+    <div class="col-md-4">{% with field=form.email %}{% include "facturation/_field.html" %}{% endwith %}</div>
+    <div class="col-md-4">{% with field=form.website %}{% include "facturation/_field.html" %}{% endwith %}</div>
+    <div class="col-12">{% with field=form.bank_details %}{% include "facturation/_field.html" %}{% endwith %}</div>
+    <div class="col-12">{% with field=form.footer_text %}{% include "facturation/_field.html" %}{% endwith %}</div>
+    <div class="col-md-3">{% with field=form.accent_color %}{% include "facturation/_field.html" %}{% endwith %}</div>
+    <div class="col-md-9">{% with field=form.operator_name %}{% include "facturation/_field.html" %}{% endwith %}</div>
+  </div>
+
+  <hr>
+  <h2 class="h5">Connexion à l'API e-MCF</h2>
+  <div class="row">
+    <div class="col-md-4">{% with field=form.emcf_env %}{% include "facturation/_field.html" %}{% endwith %}</div>
+    <div class="col-md-8">{% with field=form.emcf_token %}{% include "facturation/_field.html" %}{% endwith %}</div>
+  </div>
+  <div class="alert alert-warning small">
+    Le jeton est enregistré dans la base de données de l'application : protégez le fichier
+    <code>db.sqlite3</code> et ne le partagez pas.
+  </div>
+
+  <div>
+    <button class="btn btn-primary">Enregistrer</button>
+    <a class="btn btn-link" href="{% url 'company_list' %}">Annuler</a>
+  </div>
+</form>
+{% endblock %}

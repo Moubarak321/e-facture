@@ -1,0 +1,8 @@
+<tr>
+  <td>{{ form.method }}</td>
+  <td style="width:200px">{{ form.amount }}{% for e in form.amount.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</td>
+  <td style="width:50px" class="text-end">
+    <span class="d-none">{{ form.DELETE }}</span>
+    <button type="button" class="btn btn-sm btn-outline-danger remove-row">✕</button>
+  </td>
+</tr>

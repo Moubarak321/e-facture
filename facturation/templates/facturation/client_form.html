@@ -1,0 +1,15 @@
+{% extends "facturation/base.html" %}
+{% block title %}{% if client %}Modifier le client{% else %}Nouveau client{% endif %}{% endblock %}
+{% block content %}
+<h1 class="h3 mb-3">{% if client %}Modifier le client{% else %}Nouveau client{% endif %}</h1>
+<form method="post" class="card card-body" style="max-width:640px">
+  {% csrf_token %}
+  {% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
+  {{ form.non_field_errors }}
+  {% for field in form %}{% include "facturation/_field.html" %}{% endfor %}
+  <div>
+    <button class="btn btn-primary">Enregistrer</button>
+    <a class="btn btn-link" href="{% if next %}{{ next }}{% else %}{% url 'client_list' %}{% endif %}">Annuler</a>
+  </div>
+</form>
+{% endblock %}

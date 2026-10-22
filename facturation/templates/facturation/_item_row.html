@@ -1,0 +1,10 @@
+<tr>
+  <td>{{ form.name }}{% for e in form.name.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</td>
+  <td style="width:160px">{{ form.price }}{% for e in form.price.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</td>
+  <td style="width:110px">{{ form.quantity }}{% for e in form.quantity.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</td>
+  <td style="width:130px">{{ form.tax_group }}</td>
+  <td style="width:50px" class="text-end">
+    <span class="d-none">{{ form.DELETE }}</span>
+    <button type="button" class="btn btn-sm btn-outline-danger remove-row">✕</button>
+  </td>
+</tr>

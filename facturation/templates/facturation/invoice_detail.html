@@ -1,0 +1,75 @@
+{% extends "facturation/base.html" %}
+{% load facturation_extras %}
+{% block title %}{{ invoice }}{% endblock %}
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+  <h1 class="h3 m-0">{{ invoice.get_type_display }}
+    <span class="badge {{ invoice.badge_class }} fs-6">{{ invoice.get_status_display }}</span></h1>
+  <div class="d-flex flex-wrap gap-2">
+    <a class="btn btn-outline-dark" target="_blank" href="{% url 'invoice_print' invoice.pk %}">Imprimer / PDF</a>
+    <form method="post" action="{% url 'invoice_refresh' invoice.pk %}">{% csrf_token %}
+      <button class="btn btn-outline-secondary">Actualiser depuis l'API</button></form>
+    {% if invoice.status == 'pending' %}
+    <form method="post" action="{% url 'invoice_confirm' invoice.pk %}">{% csrf_token %}
+      <button class="btn btn-success">Confirmer</button></form>
+    <form method="post" action="{% url 'invoice_cancel' invoice.pk %}"
+          onsubmit="return confirm('Annuler cette facture en attente ?');">{% csrf_token %}
+      <button class="btn btn-outline-danger">Annuler</button></form>
+    {% endif %}
+    {% if invoice.status == 'confirmed' and not invoice.is_credit_note %}
+    <a class="btn btn-warning" href="{% url 'invoice_create' %}?from={{ invoice.pk }}">Créer un avoir</a>
+    {% endif %}
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-md-6"><div class="card h-100"><div class="card-header">Informations</div>
+    <ul class="list-group list-group-flush">
+      <li class="list-group-item"><b>Société émettrice :</b> {{ invoice.issuer.name|default:"—" }}</li>
+      <li class="list-group-item"><b>UID :</b> <code>{{ invoice.uid }}</code></li>
+      <li class="list-group-item"><b>Date :</b> {{ invoice.created_at|date:"d/m/Y H:i" }}</li>
+      {% if invoice.reference %}<li class="list-group-item"><b>Facture d'origine :</b> <code>{{ invoice.reference }}</code></li>{% endif %}
+      {% if invoice.aib %}<li class="list-group-item"><b>AIB :</b> groupe {{ invoice.aib }}</li>{% endif %}
+      <li class="list-group-item"><b>Total TTC :</b> {{ invoice.total|money }} FCFA</li>
+    </ul></div></div>
+  <div class="col-md-6"><div class="card h-100"><div class="card-header">Client</div>
+    <ul class="list-group list-group-flush">
+      <li class="list-group-item">{% if invoice.client %}<a href="{% url 'client_edit' invoice.client.pk %}">{{ invoice.client_name }}</a>{% else %}{{ invoice.client_name|default:"Client de passage" }}{% endif %}</li>
+      <li class="list-group-item"><b>IFU :</b> {{ invoice.client_ifu|default:"—" }}</li>
+      <li class="list-group-item"><b>Contact :</b> {{ invoice.client_contact|default:"—" }}</li>
+      <li class="list-group-item">{{ invoice.client_address|default:"—" }}</li>
+    </ul></div></div>
+</div>
+
+<div class="card mt-3"><div class="card-header">Articles</div>
+<table class="table m-0">
+  <thead><tr><th>Désignation</th><th class="text-end">Prix</th><th class="text-end">Qté</th><th>Taxe</th><th class="text-end">Total</th></tr></thead>
+  <tbody>
+  {% for it in invoice.items.all %}
+    <tr><td>{{ it.name }}</td><td class="text-end">{{ it.price|money }}</td>
+        <td class="text-end">{{ it.quantity|floatformat:"-3" }}</td><td>{{ it.tax_group }}</td>
+        <td class="text-end">{{ it.line_total|money }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+
+<div class="card mt-3"><div class="card-header">Paiements</div>
+<ul class="list-group list-group-flush">
+  {% for p in invoice.payments.all %}<li class="list-group-item">{{ p.get_method_display }} : {{ p.amount|money }}</li>{% endfor %}
+</ul></div>
+
+{% if invoice.security %}
+<div class="card mt-3 border-success"><div class="card-header bg-success text-white">Éléments de sécurité DGI</div>
+<ul class="list-group list-group-flush">
+  <li class="list-group-item"><b>Code MECeF/DGI :</b> {{ invoice.number }}</li>
+  <li class="list-group-item"><b>NIM :</b> {{ invoice.nim }}</li>
+  <li class="list-group-item"><b>Compteurs :</b> {{ invoice.counters }}</li>
+  <li class="list-group-item"><b>Date/heure :</b> {{ invoice.security_date }}</li>
+  <li class="list-group-item"><b>QR code :</b> <code>{{ invoice.qr_text }}</code></li>
+</ul></div>
+{% endif %}
+
+<details class="mt-3"><summary>Requête envoyée à l'API</summary><pre class="small bg-white border p-2">{{ payload_json }}</pre></details>
+{% if details_json %}<details class="mt-2"><summary>Dernière réponse « détails » de l'API</summary><pre class="small bg-white border p-2">{{ details_json }}</pre></details>{% endif %}
+{% if security_json %}<details class="mt-2"><summary>Réponse brute de confirmation</summary><pre class="small bg-white border p-2">{{ security_json }}</pre></details>{% endif %}
+{% endblock %}
