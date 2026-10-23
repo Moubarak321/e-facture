@@ -40,6 +40,8 @@ class CompanySettings(models.Model):
     operator_name = models.CharField(
         "Nom de l'opérateur envoyé à la DGI", max_length=100, default="Administrateur"
     )
+    invoice_prefix = models.CharField("Préfixe des factures", max_length=10, default="FAC")
+    credit_prefix = models.CharField("Préfixe des avoirs", max_length=10, default="AV")
     emcf_token = models.TextField("Jeton API e-MCF de cette société", blank=True, default="")
     emcf_env = models.CharField(
         "Environnement e-MCF", max_length=4, choices=ENV_CHOICES, blank=True, default=""
@@ -95,7 +97,7 @@ class Invoice(models.Model):
         ("EV", "Facture de vente à l'exportation"),
         ("EA", "Facture d'avoir à l'exportation"),
     ]
-    AIB_CHOICES = [("", "Aucun"), ("A", "AIB groupe A (1 %)"), ("B", "AIB groupe B (5 %)"),("C", "AIB groupe C (3 %)")]
+    AIB_CHOICES = [("", "Aucun"), ("A", "AIB groupe A (1 %)"), ("B", "AIB groupe B (5 %)")]
 
     class Status(models.TextChoices):
         PENDING = "pending", "En attente"
@@ -109,6 +111,10 @@ class Invoice(models.Model):
     client = models.ForeignKey(
         Client, null=True, blank=True, on_delete=models.SET_NULL, related_name="invoices"
     )
+    # Numérotation PROPRE au logiciel (indépendante du code MECeF/DGI)
+    internal_number = models.CharField("N° de facture", max_length=50, blank=True, db_index=True)
+    payment_communication = models.CharField("Communication de paiement", max_length=200, blank=True)
+    note = models.TextField("Note", blank=True)
     uid = models.CharField("UID e-MCF", max_length=64, unique=True)
     type = models.CharField(max_length=2, choices=TYPES, default="FV")
     reference = models.CharField("UID de la facture d'origine", max_length=64, blank=True)
@@ -135,9 +141,16 @@ class Invoice(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["company", "internal_number"],
+                condition=~models.Q(internal_number=""),
+                name="uniq_company_internal_number",
+            )
+        ]
 
     def __str__(self):
-        return f"{self.get_type_display()} {self.number or self.uid}"
+        return f"{self.get_type_display()} {self.internal_number or self.number or self.uid}"
 
     @property
     def issuer(self):
@@ -210,3 +223,21 @@ class Payment(models.Model):
     invoice = models.ForeignKey(Invoice, related_name="payments", on_delete=models.CASCADE)
     method = models.CharField(max_length=20, choices=PAYMENT_METHODS, default="ESPECES")
     amount = models.DecimalField(max_digits=16, decimal_places=2)
+
+
+def next_internal_number(company, inv_type, year=None):
+    """Prochain numéro interne, ex. FAC/2025/00001 (AV/2025/00001 pour un avoir).
+
+    Basé sur le plus grand numéro existant de la société pour ce préfixe et cette année :
+    si vous modifiez un numéro à la main, la suite repart de celui-ci.
+    """
+    year = year or timezone.localdate().year
+    prefix = company.credit_prefix if inv_type in ("FA", "EA") else company.invoice_prefix
+    head = f"{prefix}/{year}/"
+    best = 0
+    existing = Invoice.objects.filter(company=company, internal_number__startswith=head)
+    for number in existing.values_list("internal_number", flat=True):
+        tail = number[len(head):]
+        if tail.isdigit():
+            best = max(best, int(tail))
+    return f"{head}{best + 1:05d}"

@@ -1,0 +1,19 @@
+{% extends "facturation/base.html" %}
+{% block title %}Modifier la facture{% endblock %}
+{% block content %}
+<h1 class="h3 mb-3">Modifier la facture {{ invoice.internal_number|default:invoice.uid }}</h1>
+<div class="alert alert-warning" style="max-width:640px">
+  Ces trois champs sont propres à l'application : ils ne sont pas envoyés à la DGI. Le contenu fiscal
+  (articles, montants, client) ne peut pas être modifié ; pour le corriger, émettez un avoir.
+  Changer un numéro déjà communiqué au client peut rompre votre suite de numérotation.
+</div>
+<form method="post" class="card card-body" style="max-width:640px">
+  {% csrf_token %}
+  {{ form.non_field_errors }}
+  {% for field in form %}{% include "facturation/_field.html" %}{% endfor %}
+  <div>
+    <button class="btn btn-primary">Enregistrer</button>
+    <a class="btn btn-link" href="{% url 'invoice_detail' invoice.pk %}">Annuler</a>
+  </div>
+</form>
+{% endblock %}

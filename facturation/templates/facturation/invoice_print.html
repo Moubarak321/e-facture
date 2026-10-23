@@ -19,7 +19,10 @@
   th { background: var(--accent); color: #fff; text-align: left; padding: 6px; }
   td { padding: 6px; border-bottom: 1px solid #ddd; }
   .r { text-align: right; }
-  .totals { width: 55%; margin-left: auto; }
+  .after { display: flex; gap: 20px; align-items: flex-start; margin-top: 10px; }
+  .after .left { flex: 1; line-height: 1.6; }
+  .after .left p { margin: 0 0 8px; }
+  .totals { flex: 0 0 55%; margin-top: 0; }
   .totals td { border: none; padding: 3px 6px; }
   .grand td { font-weight: bold; font-size: 15px; border-top: 2px solid var(--accent); }
   .security { margin-top: 20px; display: flex; gap: 16px; align-items: center; border: 2px solid var(--accent); padding: 10px; }
@@ -46,7 +49,7 @@
     </div>
   </header>
 
-  <h2>{{ invoice.get_type_display }}{% if invoice.number %} n° {{ invoice.number }}{% endif %}</h2>
+  <h2>{% if invoice.internal_number %}{% if invoice.is_credit_note %}Avoir{% else %}Facture{% endif %} N° : {{ invoice.internal_number }}{% else %}{{ invoice.get_type_display }}{% endif %}</h2>
 
   {% if invoice.status == 'pending' %}
     <div class="warn">FACTURE NON CONFIRMÉE : document sans valeur fiscale tant qu'elle n'est pas confirmée auprès de la DGI.</div>
@@ -75,6 +78,11 @@
     </tbody>
   </table>
 
+  <div class="after">
+  <div class="left">
+    {% if invoice.payment_communication %}<p><b>Communication de paiement :</b> {{ invoice.payment_communication }}</p>{% endif %}
+    {% if invoice.note %}<p><b>Note :</b> {{ invoice.note|linebreaksbr }}</p>{% endif %}
+  </div>
   <table class="totals">
     {% for g in tax_summary %}
       <tr><td>Groupe {{ g.group }} ({{ g.rate }} %) : HT {{ g.ht|money }}</td><td class="r">TVA {{ g.tax|money }}</td></tr>
@@ -84,6 +92,7 @@
       <tr><td>{{ p.get_method_display }}</td><td class="r">{{ p.amount|money }}</td></tr>
     {% endfor %}
   </table>
+  </div>
 
   {% if invoice.security %}
   <div class="security">

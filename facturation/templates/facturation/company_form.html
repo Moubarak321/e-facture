@@ -21,6 +21,9 @@
     <div class="col-12">{% with field=form.footer_text %}{% include "facturation/_field.html" %}{% endwith %}</div>
     <div class="col-md-3">{% with field=form.accent_color %}{% include "facturation/_field.html" %}{% endwith %}</div>
     <div class="col-md-9">{% with field=form.operator_name %}{% include "facturation/_field.html" %}{% endwith %}</div>
+    <div class="col-md-3">{% with field=form.invoice_prefix %}{% include "facturation/_field.html" %}{% endwith %}</div>
+    <div class="col-md-3">{% with field=form.credit_prefix %}{% include "facturation/_field.html" %}{% endwith %}</div>
+    <div class="col-md-6 small text-muted pt-4">Numéros générés : <code>FAC/2025/00001</code> pour les factures, <code>AV/2025/00001</code> pour les avoirs.</div>
   </div>
 
   <hr>

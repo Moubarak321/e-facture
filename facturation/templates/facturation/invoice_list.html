@@ -21,6 +21,24 @@
   </select></div>
   <div class="col-md-1"><button class="btn btn-outline-secondary w-100">OK</button></div>
 </form>
+<details class="card card-body mb-3">
+  <summary class="fw-bold">Synchroniser avec la DGI</summary>
+  <p class="small text-muted mt-2 mb-2">
+    L'API e-MCF ne permet de retrouver que les factures <b>en attente</b> (à confirmer ou à annuler).
+    Les factures déjà confirmées ne sont pas listables : elles restent visibles ici si elles ont été émises par cette application.
+  </p>
+  <form method="post" action="{% url 'invoice_sync' %}" class="row g-2 align-items-end">
+    {% csrf_token %}
+    <div class="col-md-4"><label class="form-label small mb-1">Société</label>
+      <select class="form-select" name="company" required>
+        {% for c in companies %}<option value="{{ c.pk }}">{{ c.name }} ({{ c.env_label }})</option>{% endfor %}
+      </select></div>
+    <div class="col-md-5"><label class="form-label small mb-1">UID d'une facture précise (facultatif)</label>
+      <input class="form-control" name="uid" placeholder="Laisser vide pour importer toutes les factures en attente"></div>
+    <div class="col-md-3"><button class="btn btn-outline-primary w-100">Récupérer depuis la DGI</button></div>
+  </form>
+</details>
+
 <div class="card">
   {% include "facturation/_invoice_table.html" with invoices=page %}
 </div>

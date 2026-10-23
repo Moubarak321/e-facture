@@ -7,7 +7,10 @@ urlpatterns = [
     # factures
     path("factures/", views.invoice_list, name="invoice_list"),
     path("factures/nouvelle/", views.invoice_create, name="invoice_create"),
+    path("factures/prochain-numero/", views.next_number, name="next_number"),
+    path("factures/synchroniser/", views.invoice_sync, name="invoice_sync"),
     path("factures/<int:pk>/", views.invoice_detail, name="invoice_detail"),
+    path("factures/<int:pk>/modifier/", views.invoice_edit, name="invoice_edit"),
     path("factures/<int:pk>/imprimer/", views.invoice_print, name="invoice_print"),
     path("factures/<int:pk>/actualiser/", views.invoice_refresh, name="invoice_refresh"),
     path("factures/<int:pk>/confirmer/", views.invoice_confirm, name="invoice_confirm"),

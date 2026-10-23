@@ -17,6 +17,9 @@
     <div class="col-md-4">{% with field=form.type %}{% include "facturation/_field.html" %}{% endwith %}</div>
     <div class="col-md-5">{% with field=form.reference %}{% include "facturation/_field.html" %}{% endwith %}</div>
     <div class="col-md-3">{% with field=form.aib %}{% include "facturation/_field.html" %}{% endwith %}</div>
+    <div class="col-md-4">{% with field=form.internal_number %}{% include "facturation/_field.html" %}{% endwith %}</div>
+    <div class="col-md-4">{% with field=form.payment_communication %}{% include "facturation/_field.html" %}{% endwith %}</div>
+    <div class="col-md-4">{% with field=form.note %}{% include "facturation/_field.html" %}{% endwith %}</div>
   </div></div></div>
 
   <div class="card mb-3"><div class="card-header d-flex justify-content-between">
@@ -84,6 +87,30 @@ function updateTotal() {
   });
   document.getElementById('total').textContent = Math.round(sum).toLocaleString('fr-FR');
 }
+// --- numéro de facture proposé automatiquement (modifiable) ---
+const companySel = document.getElementById('id_company');
+const typeSel = document.getElementById('id_type');
+const numInput = document.getElementById('id_internal_number');
+const comInput = document.getElementById('id_payment_communication');
+let autoNum = numInput.value;
+async function refreshNumber() {
+  if (!companySel.value) return;
+  try {
+    const r = await fetch("{% url 'next_number' %}?company=" + companySel.value + "&type=" + typeSel.value);
+    const data = await r.json();
+    if (!data.number) return;
+    if (numInput.value === '' || numInput.value === autoNum) {
+      const followNumber = comInput.value === '' || comInput.value === autoNum;
+      numInput.value = data.number;
+      if (followNumber) comInput.value = data.number;
+    }
+    autoNum = data.number;
+  } catch (e) { /* hors ligne : le serveur proposera un numéro à l'enregistrement */ }
+}
+companySel.addEventListener('change', refreshNumber);
+typeSel.addEventListener('change', refreshNumber);
+if (!numInput.value) refreshNumber();
+
 setupFormset('items');
 setupFormset('pays');
 document.getElementById('items-rows').addEventListener('input', updateTotal);

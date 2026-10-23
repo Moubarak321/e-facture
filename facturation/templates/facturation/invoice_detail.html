@@ -6,6 +6,7 @@
   <h1 class="h3 m-0">{{ invoice.get_type_display }}
     <span class="badge {{ invoice.badge_class }} fs-6">{{ invoice.get_status_display }}</span></h1>
   <div class="d-flex flex-wrap gap-2">
+    <a class="btn btn-outline-secondary" href="{% url 'invoice_edit' invoice.pk %}">Modifier n° / note</a>
     <a class="btn btn-outline-dark" target="_blank" href="{% url 'invoice_print' invoice.pk %}">Imprimer / PDF</a>
     <form method="post" action="{% url 'invoice_refresh' invoice.pk %}">{% csrf_token %}
       <button class="btn btn-outline-secondary">Actualiser depuis l'API</button></form>
@@ -25,6 +26,9 @@
 <div class="row g-3">
   <div class="col-md-6"><div class="card h-100"><div class="card-header">Informations</div>
     <ul class="list-group list-group-flush">
+      <li class="list-group-item"><b>N° de facture :</b> {{ invoice.internal_number|default:"—" }}</li>
+      <li class="list-group-item"><b>Communication de paiement :</b> {{ invoice.payment_communication|default:"—" }}</li>
+      {% if invoice.note %}<li class="list-group-item"><b>Note :</b> {{ invoice.note|linebreaksbr }}</li>{% endif %}
       <li class="list-group-item"><b>Société émettrice :</b> {{ invoice.issuer.name|default:"—" }}</li>
       <li class="list-group-item"><b>UID :</b> <code>{{ invoice.uid }}</code></li>
       <li class="list-group-item"><b>Date :</b> {{ invoice.created_at|date:"d/m/Y H:i" }}</li>

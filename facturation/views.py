@@ -8,14 +8,20 @@ from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
 from django.db import transaction
 from django.db.models import Count, Q
+from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
 
 from .emcf_client import EmcfClient, EmcfError, build_payload
-from .forms import ClientForm, CompanyForm, InvoiceForm, ItemFormSet, PaymentFormSet
-from .models import Client, CompanySettings, Invoice, InvoiceItem, Payment
+from .forms import (
+    ClientForm, CompanyForm, InvoiceForm, InvoiceInfoForm, ItemFormSet, PaymentFormSet,
+)
+from .models import (
+    PAYMENT_METHODS, TAX_GROUPS, Client, CompanySettings, Invoice, InvoiceItem, Payment,
+    next_internal_number,
+)
 
 
 def _pretty(data):
@@ -69,6 +75,7 @@ def invoice_list(request):
     if q:
         qs = qs.filter(
             Q(client_name__icontains=q) | Q(uid__icontains=q) | Q(client_ifu__icontains=q)
+            | Q(internal_number__icontains=q)
         )
     if status:
         qs = qs.filter(status=status)
@@ -118,6 +125,9 @@ def invoice_create(request):
                 "reference": source.uid,
                 "aib": source.aib,
             })
+            if issuer:
+                initial["internal_number"] = next_internal_number(issuer, initial["type"])
+                initial["payment_communication"] = initial["internal_number"]
             items = ItemFormSet(prefix="items", initial=[
                 {"name": i.name, "price": i.price, "quantity": i.quantity, "tax_group": i.tax_group}
                 for i in source.items.all()
@@ -129,6 +139,10 @@ def invoice_create(request):
                 initial["company"] = CompanySettings.objects.first().pk
             if request.GET.get("client"):
                 initial["client"] = request.GET["client"]
+            chosen = CompanySettings.objects.filter(pk=initial.get("company") or 0).first()
+            if chosen:
+                initial["internal_number"] = next_internal_number(chosen, "FV")
+                initial["payment_communication"] = initial["internal_number"]
             items = ItemFormSet(prefix="items")
         return _invoice_form_response(
             request, InvoiceForm(initial=initial), items, PaymentFormSet(prefix="pays")
@@ -168,6 +182,9 @@ def invoice_create(request):
     else:
         pay_rows = [{"method": "ESPECES", "amount": total}]
 
+    number = d["internal_number"].strip() or next_internal_number(company, d["type"])
+    communication = d["payment_communication"].strip() or number
+
     client_data = {
         "client_name": client.name if client else "",
         "client_ifu": client.ifu if client else "",
@@ -198,6 +215,7 @@ def invoice_create(request):
     with transaction.atomic():
         invoice = Invoice.objects.create(
             company=company, client=client, uid=uid, type=d["type"],
+            internal_number=number, payment_communication=communication, note=d["note"],
             reference=d["reference"], aib=d["aib"], total=total_saved,
             request_payload=payload, create_response=resp, created_by=request.user,
             **client_data,
@@ -372,3 +390,138 @@ def api_info(request):
     return render(request, "facturation/api_info.html", {
         "blocks": blocks, "errors": errors, "companies": companies, "company": company,
     })
+
+
+# --------------------------------------------------------------------------- numéro, édition locale
+@login_required
+def next_number(request):
+    """Numéro proposé pour (société, type) : appelé en JavaScript par le formulaire."""
+    company = CompanySettings.objects.filter(pk=request.GET.get("company") or 0).first()
+    inv_type = request.GET.get("type", "FV")
+    if not company or inv_type not in dict(Invoice.TYPES):
+        return JsonResponse({"number": ""})
+    return JsonResponse({"number": next_internal_number(company, inv_type)})
+
+
+@login_required
+def invoice_edit(request, pk):
+    """Modifie les champs propres au logiciel. Le contenu fiscal envoyé à la DGI reste inchangé."""
+    invoice = get_object_or_404(Invoice, pk=pk)
+    initial = {
+        "internal_number": invoice.internal_number,
+        "payment_communication": invoice.payment_communication,
+        "note": invoice.note,
+    }
+    form = InvoiceInfoForm(request.POST or None, invoice=invoice, initial=initial)
+    if request.method == "POST" and form.is_valid():
+        d = form.cleaned_data
+        invoice.internal_number = d["internal_number"]
+        invoice.payment_communication = d["payment_communication"]
+        invoice.note = d["note"]
+        invoice.save(update_fields=["internal_number", "payment_communication", "note"])
+        messages.success(request, "Facture mise à jour.")
+        return redirect("invoice_detail", pk=pk)
+    return render(request, "facturation/invoice_edit.html", {"form": form, "invoice": invoice})
+
+
+# --------------------------------------------------------------------------- synchronisation DGI
+def _dec(value, default=Decimal(0)):
+    try:
+        return Decimal(str(value))
+    except Exception:
+        return default
+
+
+def _pending_uids(data):
+    """Extrait les UID de la réponse de GET /api/invoice (pendingRequestsList)."""
+    items = []
+    if isinstance(data, dict):
+        for key in ("pendingRequestsList", "pendingRequests", "invoices"):
+            if isinstance(data.get(key), list):
+                items = data[key]
+                break
+    uids = []
+    for it in items:
+        uid = it.get("uid") if isinstance(it, dict) else it
+        if uid:
+            uids.append(str(uid))
+    return uids
+
+
+def _create_from_api(company, uid, details, user):
+    """Crée en base locale une facture en attente à partir des détails renvoyés par la DGI."""
+    details = details if isinstance(details, dict) else {}
+    inv_type = details.get("type") if details.get("type") in dict(Invoice.TYPES) else "FV"
+    aib = details.get("aib") if details.get("aib") in ("A", "B") else ""
+    cl = details.get("client") if isinstance(details.get("client"), dict) else {}
+
+    items = []
+    for it in details.get("items") or []:
+        if not isinstance(it, dict) or not it.get("name"):
+            continue
+        group = it.get("taxGroup") if it.get("taxGroup") in dict(TAX_GROUPS) else "B"
+        items.append((str(it["name"])[:200], _dec(it.get("price")), _dec(it.get("quantity"), Decimal(1)), group))
+    pays = []
+    for p in details.get("payment") or []:
+        if isinstance(p, dict):
+            method = p.get("name") if p.get("name") in dict(PAYMENT_METHODS) else "AUTRE"
+            pays.append((method, _dec(p.get("amount"))))
+
+    total = sum((price * qty for _, price, qty, _ in items), Decimal(0))
+    number = next_internal_number(company, inv_type)
+    with transaction.atomic():
+        invoice = Invoice.objects.create(
+            company=company, uid=uid, type=inv_type, aib=aib,
+            reference=str(details.get("reference") or "")[:64],
+            internal_number=number, payment_communication=number,
+            client_name=str(cl.get("name") or "")[:200], client_ifu=str(cl.get("ifu") or "")[:13],
+            client_contact=str(cl.get("contact") or "")[:100], client_address=str(cl.get("address") or ""),
+            total=total, request_payload=details, api_details=details, created_by=user,
+        )
+        for name, price, qty, group in items:
+            InvoiceItem.objects.create(invoice=invoice, name=name, price=price, quantity=qty, tax_group=group)
+        for method, amount in pays:
+            Payment.objects.create(invoice=invoice, method=method, amount=amount)
+    return invoice
+
+
+@login_required
+@require_POST
+def invoice_sync(request):
+    """Récupère auprès de la DGI les factures EN ATTENTE absentes de la base locale.
+
+    L'API e-MCF ne permet pas de lister les factures déjà confirmées/annulées : seules les
+    factures en attente sont retrouvables (à confirmer ou à annuler). On peut aussi importer
+    une facture en attente à partir de son UID.
+    """
+    company = get_object_or_404(CompanySettings, pk=request.POST.get("company") or 0)
+    client = EmcfClient(company)
+    uid_manual = request.POST.get("uid", "").strip()
+
+    try:
+        uids = [uid_manual] if uid_manual else _pending_uids(client.pending())
+        if not uid_manual and not uids:
+            messages.info(request, f"Aucune facture en attente côté DGI pour « {company.name} ».")
+            return redirect("invoice_list")
+
+        imported, known, failed = 0, 0, []
+        for uid in uids:
+            if Invoice.objects.filter(uid=uid).exists():
+                known += 1
+                continue
+            try:
+                _create_from_api(company, uid, client.details(uid), request.user)
+                imported += 1
+            except EmcfError as exc:
+                failed.append(f"{uid} : {exc}")
+    except EmcfError as exc:
+        messages.error(request, f"Synchronisation impossible : {exc}")
+        return redirect("invoice_list")
+
+    if imported:
+        messages.success(request, f"{imported} facture(s) en attente importée(s) depuis la DGI.")
+    if known:
+        messages.info(request, f"{known} facture(s) déjà présente(s) en base.")
+    for line in failed:
+        messages.warning(request, f"Import impossible — {line}")
+    return redirect("invoice_list")
