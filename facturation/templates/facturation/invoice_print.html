@@ -58,7 +58,7 @@
   {% endif %}
 
   <div class="meta">
-    <div class="box"><b>Date :</b> {{ invoice.created_at|date:"d/m/Y H:i" }}<br>
+    <div class="box"><b>Date :</b> {{ invoice.created_at|date:"d/m/Y" }}<br>
       {% if invoice.reference %}<b>Avoir sur facture (UID) :</b> {{ invoice.reference }}<br>{% endif %}
       <b>UID :</b> {{ invoice.uid }}</div>
     <div class="box"><b>Client</b><br>
