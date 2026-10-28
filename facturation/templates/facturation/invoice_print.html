@@ -34,13 +34,13 @@
   table.items td.r { text-align: right; white-space: nowrap; }
   table.items tr.line:nth-of-type(even) td { background: var(--stripe); }
   table.items tr.sec td { background: var(--section-bg); color: var(--section-text); font-weight: 700; padding: 9px 6px; }
-  table.items tr.note td { font-style: italic; color: #666; font-weight: 400; }
+  table.items tr.note td { font-style: italic; color: #666; font-weight: 400;  }
   table.items tr.subtotal td { font-weight: 700; color: var(--label); background: var(--stripe); }
   .small { font-size: 11px; font-weight: 400; color: #777; display: block; }
   .after { display: flex; gap: 28px; align-items: flex-start; margin-top: 14px; page-break-inside: avoid; }
-  .after .left { flex: 1; line-height: 1.6; font-weight: 700; }
-  .after .left .legal { margin-top: 12px; color: #777; text-align: justify; font-weight: 700; white-space: pre-line; }
-  .after .left .note { margin-top: 10px; font-style: italic; font-weight: 400; }
+  .after .left { flex: 1; line-height: 1.6; font-weight: 400; }
+  .after .left .legal { margin-top: 10px; color: #777; text-align: justify; font-weight: 700; white-space: pre-line;font-size: x-small; }
+  .after .left .note { margin-top: 10px; font-style: italic; font-weight: 400; font-weight: bold; color: #0300aa;}
   table.totals { flex: 0 0 54%; border-collapse: collapse; }
   table.totals td { padding: 6px 6px; font-weight: 700; border-top: 1px solid #e3e3e3; }
   table.totals td.r { text-align: right; white-space: nowrap; }
@@ -70,14 +70,14 @@
     <div class="co">
       {{ doc.company.name }}<br>
       {% if doc.company.rccm %}RCCM {{ doc.company.rccm }}<br>{% endif %}
+      {% if doc.company.ifu %}IFU : {{ doc.company.ifu }}{% endif %}<br>
       {% if doc.company.address %}{{ doc.company.address|linebreaksbr }}<br>{% endif %}
-      {% if doc.company.ifu %}IFU : {{ doc.company.ifu }}{% endif %}
     </div>
   </div>
 </td></tr></thead>
 
 <tbody><tr><td>
-  {% if doc.banner %}<div class="banner {{ doc.banner_class }}">{{ doc.banner }}</div>{% endif %}
+  <!-- {% if doc.banner %}<div class="banner {{ doc.banner_class }}">{{ doc.banner }}</div>{% endif %} -->
 
   <div class="addr">
     <div>
@@ -158,7 +158,7 @@
 
 <tfoot><tr><td>
   <div class="foot">
-    <div>{% if doc.company.rccm %}RCCM {{ doc.company.rccm }}{% endif %}{% if doc.company.phone %} / {{ doc.company.phone }}{% endif %} {{ doc.company.email }} {{ doc.company.website }}</div>
+    <div>{% if doc.company.phone %} Téléphone : {{ doc.company.phone }}{% endif %} {{ doc.company.email }} {{ doc.company.website }}</div>
     {% if doc.company.bank_details %}<div class="bank-title">Coordonnées bancaires</div><div class="pre">{{ doc.company.bank_details }}</div>{% endif %}
   </div>
 </td></tr></tfoot>
