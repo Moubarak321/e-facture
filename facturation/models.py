@@ -4,7 +4,19 @@ from django.conf import settings
 from django.db import models
 from django.utils import timezone
 
-TAX_GROUPS = [(g, f"Groupe {g}") for g in "ABCDEF"]
+from . import calculations as calc
+from . import conf
+
+# Libellés exacts demandés, dans cet ordre. Les codes (A-F) sont inchangés : les données
+# existantes et l'API e-MCF continuent de fonctionner sans migration de données.
+TAX_GROUPS = [
+    ("A", "A — EXONÉRÉ"),
+    ("B", "B — TAXABLE 18 %"),
+    ("C", "C — EXPORTATION"),
+    ("D", "D — TVA RÉGIME D’EXCEPTION 18 %"),
+    ("E", "E — RÉGIME TPS"),
+    ("F", "F — RÉSERVE"),
+]
 
 PAYMENT_METHODS = [
     ("ESPECES", "Espèces"),
@@ -36,7 +48,8 @@ class CompanySettings(models.Model):
     rccm = models.CharField("RCCM", max_length=100, blank=True)
     bank_details = models.TextField("Coordonnées bancaires", blank=True)
     footer_text = models.TextField("Pied de page / mentions", blank=True)
-    accent_color = models.CharField("Couleur principale", max_length=7, default="#0d6efd")
+    accent_color = models.CharField("Couleur principale (titre de la facture)", max_length=7, default="#0d6efd")
+    secondary_color = models.CharField("Couleur secondaire (libellés)", max_length=7, default="#1f4e8c")
     operator_name = models.CharField(
         "Nom de l'opérateur envoyé à la DGI", max_length=100, default="Administrateur"
     )
@@ -81,10 +94,20 @@ class Client(models.Model):
     ifu = models.CharField("IFU", max_length=13, blank=True)
     contact = models.CharField("Contact", max_length=100, blank=True)
     address = models.TextField("Adresse", blank=True)
+    shipping_address = models.TextField("Adresse d'expédition", blank=True)
+    code = models.CharField(
+        "Code client", max_length=30, blank=True, default="",
+        help_text="Code interne : jamais imprimé sur les factures ni sur les proformas.",
+    )
     created_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
         ordering = ["name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["code"], condition=~models.Q(code=""), name="uniq_client_code"
+            )
+        ]
 
     def __str__(self):
         return self.name
@@ -97,9 +120,12 @@ class Invoice(models.Model):
         ("EV", "Facture de vente à l'exportation"),
         ("EA", "Facture d'avoir à l'exportation"),
     ]
-    AIB_CHOICES = [("", "Aucun"), ("A", "AIB groupe A (1 %)"), ("B", "AIB groupe B (5 %)")]
+    AIB_CHOICES = [("", "Aucun")] + [
+        (code, d["label"]) for code, d in conf.DEFAULT_AIB.items()
+    ]
 
     class Status(models.TextChoices):
+        DRAFT = "draft", "Brouillon"
         PENDING = "pending", "En attente"
         CONFIRMED = "confirmed", "Confirmée"
         CANCELLED = "cancelled", "Annulée"
@@ -115,10 +141,25 @@ class Invoice(models.Model):
     internal_number = models.CharField("N° de facture", max_length=50, blank=True, db_index=True)
     payment_communication = models.CharField("Communication de paiement", max_length=200, blank=True)
     note = models.TextField("Note", blank=True)
-    uid = models.CharField("UID e-MCF", max_length=64, unique=True)
+    uid = models.CharField("UID e-MCF", max_length=64, unique=True, null=True, blank=True)
     type = models.CharField(max_length=2, choices=TYPES, default="FV")
     reference = models.CharField("UID de la facture d'origine", max_length=64, blank=True)
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING)
+
+    class PaymentStatus(models.TextChoices):
+        # Statut de règlement : distinct du statut documentaire (brouillon / confirmée…).
+        UNPAID = "unpaid", "Non payé"
+        IN_PROGRESS = "in_progress", "En paiement"
+        PARTIAL = "partial", "Partiellement payé"
+        PAID = "paid", "Payé"
+
+    payment_status = models.CharField(
+        "Statut de paiement", max_length=12, choices=PaymentStatus.choices,
+        default=PaymentStatus.UNPAID,
+    )
+    invoice_date = models.DateField("Date de la facture", null=True, blank=True)
+    due_date = models.DateField("Date d'échéance", null=True, blank=True)
+    shipping_address = models.TextField("Adresse d'expédition", blank=True)
     aib = models.CharField(max_length=1, choices=AIB_CHOICES, blank=True)
 
     client_name = models.CharField(max_length=200, blank=True)
@@ -126,6 +167,10 @@ class Invoice(models.Model):
     client_contact = models.CharField(max_length=100, blank=True)
     client_address = models.TextField(blank=True)
 
+    # Montants calculés côté serveur (source de vérité). `total` = total à payer.
+    total_ht = models.DecimalField(max_digits=16, decimal_places=2, default=0)
+    total_tax = models.DecimalField(max_digits=16, decimal_places=2, default=0)
+    aib_amount = models.DecimalField(max_digits=16, decimal_places=2, default=0)
     total = models.DecimalField(max_digits=16, decimal_places=2, default=0)
 
     request_payload = models.JSONField(default=dict, blank=True)
@@ -181,6 +226,7 @@ class Invoice(models.Model):
     @property
     def badge_class(self):
         return {
+            self.Status.DRAFT: "bg-info text-dark",
             self.Status.PENDING: "bg-warning text-dark",
             self.Status.CONFIRMED: "bg-success",
             self.Status.CANCELLED: "bg-secondary",
@@ -190,29 +236,77 @@ class Invoice(models.Model):
     def is_credit_note(self):
         return self.type in ("FA", "EA")
 
-    def tax_summary(self):
-        """Récapitulatif par groupe de taxe (prix TTC -> HT/TVA, taux de settings.EMCF_TAX_RATES)."""
-        rates = settings.EMCF_TAX_RATES
-        groups = {}
-        for item in self.items.all():
-            g = groups.setdefault(
-                item.tax_group,
-                {"group": item.tax_group, "rate": rates.get(item.tax_group, 0), "ttc": Decimal(0)},
-            )
-            g["ttc"] += item.line_total
-        for g in groups.values():
-            rate = Decimal(g["rate"])
-            g["tax"] = (g["ttc"] * rate / (100 + rate)).quantize(Decimal("1"))
-            g["ht"] = g["ttc"] - g["tax"]
-        return sorted(groups.values(), key=lambda g: g["group"])
+    @property
+    def is_draft(self):
+        return self.status == self.Status.DRAFT
+
+    @property
+    def payment_badge_class(self):
+        return {
+            self.PaymentStatus.UNPAID: "bg-danger",
+            self.PaymentStatus.IN_PROGRESS: "bg-info text-dark",
+            self.PaymentStatus.PARTIAL: "bg-warning text-dark",
+            self.PaymentStatus.PAID: "bg-success",
+        }.get(self.payment_status, "bg-light text-dark")
+
+    @property
+    def display_date(self):
+        """Date de la facture (et non la date technique de création de l'enregistrement)."""
+        return self.invoice_date or timezone.localtime(self.created_at).date()
+
+    def rows_for_calc(self):
+        """Lignes ordonnées au format attendu par calculations.compute_document."""
+        rows = []
+        for it in self.items.all():
+            row = {"kind": it.kind, "name": it.name}
+            if it.kind == InvoiceItem.Kind.ITEM:
+                row.update(quantity=it.quantity, tax_group=it.tax_group)
+                if it.price_ht is not None:      # facture saisie en HT
+                    row["unit_ht"] = it.price_ht
+                else:                            # historique : prix TTC uniquement
+                    row["unit_ttc"] = it.price
+            rows.append(row)
+        return rows
+
+    def compute(self):
+        """Résultat complet des calculs de cette facture (recalculé depuis ses lignes)."""
+        return calc.compute_document(
+            self.rows_for_calc(), conf.tax_rates(),
+            aib_rate=conf.aib_rate(self.aib), aib_added=conf.AIB_ADDED_TO_TOTAL,
+            tax_labels=dict(TAX_GROUPS),
+        )
+
+    def recompute_totals(self, save=True):
+        """Met à jour les montants enregistrés à partir des lignes (le serveur fait foi)."""
+        result = self.compute()
+        self.total_ht, self.total_tax = result["total_ht"], result["total_tax"]
+        self.aib_amount, self.total = result["aib_amount"], result["total_payable"]
+        if save:
+            self.save(update_fields=["total_ht", "total_tax", "aib_amount", "total"])
+        return result
 
 
 class InvoiceItem(models.Model):
+    """Élément d'une facture : ligne d'article, titre de section ou note (dans l'ordre d'affichage)."""
+
+    class Kind(models.TextChoices):
+        ITEM = "item", "Ligne"
+        SECTION = "section", "Section"
+        NOTE = "note", "Note"
+
     invoice = models.ForeignKey(Invoice, related_name="items", on_delete=models.CASCADE)
-    name = models.CharField(max_length=200)
-    price = models.DecimalField("Prix unitaire TTC", max_digits=16, decimal_places=2)
+    kind = models.CharField(max_length=8, choices=Kind.choices, default=Kind.ITEM)
+    position = models.PositiveIntegerField(default=0)
+    name = models.TextField()  # désignation, titre de section ou texte de la note
+    price = models.DecimalField("Prix unitaire TTC", max_digits=16, decimal_places=2, default=0)
+    price_ht = models.DecimalField(
+        "Prix unitaire HT", max_digits=16, decimal_places=2, null=True, blank=True
+    )  # vide pour les factures historiques (saisies en TTC)
     quantity = models.DecimalField(max_digits=12, decimal_places=3, default=1)
     tax_group = models.CharField(max_length=1, choices=TAX_GROUPS, default="B")
+
+    class Meta:
+        ordering = ["position", "id"]
 
     @property
     def line_total(self):

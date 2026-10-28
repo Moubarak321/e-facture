@@ -6,11 +6,13 @@
   <a href="{% url 'invoice_create' %}" class="btn btn-primary">+ Nouvelle facture</a>
 </div>
 <div class="row g-3 mb-4">
-  <div class="col-md-4"><div class="card text-center"><div class="card-body">
+  <div class="col-md-3"><div class="card text-center"><div class="card-body">
+    <div class="display-6">{{ counts.draft }}</div>Brouillons</div></div></div>
+  <div class="col-md-3"><div class="card text-center"><div class="card-body">
     <div class="display-6">{{ counts.pending }}</div>En attente</div></div></div>
-  <div class="col-md-4"><div class="card text-center"><div class="card-body">
+  <div class="col-md-3"><div class="card text-center"><div class="card-body">
     <div class="display-6">{{ counts.confirmed }}</div>Confirmées</div></div></div>
-  <div class="col-md-4"><div class="card text-center"><div class="card-body">
+  <div class="col-md-3"><div class="card text-center"><div class="card-body">
     <div class="display-6">{{ counts.cancelled }}</div>Annulées</div></div></div>
 </div>
 

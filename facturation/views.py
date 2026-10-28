@@ -14,6 +14,8 @@ from django.utils import timezone
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
 
+from . import calculations as calc
+from . import conf, documents
 from .emcf_client import EmcfClient, EmcfError, build_payload
 from .forms import (
     ClientForm, CompanyForm, InvoiceForm, InvoiceInfoForm, ItemFormSet, PaymentFormSet,
@@ -72,6 +74,7 @@ def invoice_list(request):
     status = request.GET.get("status", "")
     inv_type = request.GET.get("type", "")
     company_id = request.GET.get("company", "")
+    pay = request.GET.get("pay", "")
     if q:
         qs = qs.filter(
             Q(client_name__icontains=q) | Q(uid__icontains=q) | Q(client_ifu__icontains=q)
@@ -83,16 +86,21 @@ def invoice_list(request):
         qs = qs.filter(type=inv_type)
     if company_id.isdigit():
         qs = qs.filter(company_id=company_id)
+    if pay:
+        qs = qs.filter(payment_status=pay)
     page = Paginator(qs, 25).get_page(request.GET.get("page"))
     return render(request, "facturation/invoice_list.html", {
         "page": page, "q": q, "status": status, "inv_type": inv_type, "company_id": company_id,
+        "pay": pay, "payment_statuses": Invoice.PaymentStatus.choices,
         "statuses": Invoice.Status.choices, "types": Invoice.TYPES,
         "companies": CompanySettings.objects.all(),
     })
 
 
-# --------------------------------------------------------------------------- création de facture
+# --------------------------------------------------------------------------- création / édition de facture
 def _confirm_invoice(invoice):
+    if not invoice.uid:
+        raise EmcfError("Cette facture n'a pas encore été envoyée à la DGI (pas d'UID).")
     data = EmcfClient(invoice.issuer).confirm(invoice.uid)
     invoice.security = data
     invoice.status = Invoice.Status.CONFIRMED
@@ -100,141 +108,279 @@ def _confirm_invoice(invoice):
     invoice.save()
 
 
-def _invoice_form_response(request, form, items, pays):
-    return render(request, "facturation/invoice_form.html",
-                  {"form": form, "items": items, "pays": pays})
+def _unit_ht(item):
+    """Prix HT unitaire d'une ligne ; pour l'historique (TTC seul) on le déduit du TTC."""
+    if item.price_ht is not None:
+        return item.price_ht
+    rate = conf.tax_rates().get(item.tax_group, 0)
+    return calc.compute_line(item.quantity or 1, rate, unit_ttc=item.price)["unit_ht"]
+
+
+def _initial_from_invoice(invoice, credit_note=False):
+    """Valeurs initiales du formulaire, des lignes et des paiements à partir d'une facture."""
+    form_initial = {
+        "company": invoice.company_id, "client": invoice.client_id,
+        "shipping_address": invoice.shipping_address, "aib": invoice.aib,
+        "type": invoice.type, "reference": invoice.reference,
+        "invoice_date": invoice.invoice_date, "due_date": invoice.due_date,
+        "payment_status": invoice.payment_status, "internal_number": invoice.internal_number,
+        "payment_communication": invoice.payment_communication, "note": invoice.note,
+    }
+    items_initial = []
+    for it in invoice.items.all():
+        if it.kind == InvoiceItem.Kind.ITEM:
+            items_initial.append({"kind": "item", "name": it.name, "quantity": it.quantity,
+                                  "unit_ht": _unit_ht(it), "tax_group": it.tax_group})
+        else:
+            items_initial.append({"kind": it.kind, "name": it.name})
+    pays_initial = [{"method": p.method, "amount": p.amount} for p in invoice.payments.all()]
+    if credit_note:  # avoir pré-rempli depuis une facture
+        issuer = invoice.issuer
+        form_initial = {
+            "company": issuer.pk if issuer else None, "client": invoice.client_id,
+            "shipping_address": invoice.shipping_address, "aib": invoice.aib,
+            "type": "EA" if invoice.type in ("EV", "EA") else "FA", "reference": invoice.uid or "",
+        }
+        pays_initial = []
+        if issuer:
+            form_initial["internal_number"] = next_internal_number(issuer, form_initial["type"])
+            form_initial["payment_communication"] = form_initial["internal_number"]
+    return form_initial, items_initial, pays_initial
+
+
+def _editor_response(request, form, items, pays, invoice=None):
+    return render(request, "facturation/invoice_form.html", {
+        "form": form, "items": items, "pays": pays, "invoice": invoice,
+        "tax_rates": {k: float(v) for k, v in conf.tax_rates().items()},
+        "tax_labels": dict(TAX_GROUPS),
+        "unverified_groups": ["C", "D", "E", "F"],
+        "aib_rates": {code: d["rate"] for code, d in conf.aib_definitions().items()},
+        "aib_added": conf.AIB_ADDED_TO_TOTAL,
+        "client_shipping": {str(c.pk): c.shipping_address for c in Client.objects.all()},
+    })
+
+
+def _rows_from_formset(items):
+    """Lignes valides, dans l'ordre choisi par l'utilisateur (champ ORDER), sans les lignes supprimées."""
+    rows = []
+    for form in items.ordered_forms:
+        d = form.cleaned_data
+        row = {"kind": d["kind"], "name": d["name"]}
+        if d["kind"] == "item":
+            row.update(quantity=d["quantity"], unit_ht=d["unit_ht"], tax_group=d["tax_group"])
+        rows.append(row)
+    return rows
+
+
+def _save_invoice(invoice, d, result, pay_rows, user):
+    """Enregistre (ou met à jour) un brouillon avec ses lignes, ses paiements et ses montants."""
+    company, client = d["company"], d["client"]
+    number = d["internal_number"].strip() or next_internal_number(company, d["type"])
+    with transaction.atomic():
+        if invoice is None:
+            invoice = Invoice(created_by=user, status=Invoice.Status.DRAFT)
+        invoice.company, invoice.client = company, client
+        invoice.type, invoice.reference, invoice.aib = d["type"], d["reference"], d["aib"]
+        invoice.internal_number = number
+        invoice.payment_communication = d["payment_communication"].strip() or number
+        invoice.note = d["note"]
+        invoice.invoice_date, invoice.due_date = d["invoice_date"], d["due_date"]
+        invoice.payment_status = d["payment_status"]
+        invoice.shipping_address = d["shipping_address"]
+        invoice.client_name = client.name if client else ""
+        invoice.client_ifu = client.ifu if client else ""
+        invoice.client_contact = client.contact if client else ""
+        invoice.client_address = client.address if client else ""
+        invoice.total_ht, invoice.total_tax = result["total_ht"], result["total_tax"]
+        invoice.aib_amount, invoice.total = result["aib_amount"], result["total_payable"]
+        invoice.save()
+        invoice.items.all().delete()
+        position = 0
+        for row in result["rows"]:
+            if row["kind"] == "subtotal":
+                continue
+            InvoiceItem.objects.create(
+                invoice=invoice, kind=row["kind"], position=position, name=row["name"],
+                price=row.get("unit_ttc", 0), price_ht=row.get("unit_ht"),
+                quantity=row.get("quantity", 0), tax_group=row.get("tax_group", "B"),
+            )
+            position += 1
+        invoice.payments.all().delete()
+        for p in pay_rows:
+            Payment.objects.create(invoice=invoice, method=p["method"], amount=p["amount"])
+    return invoice
+
+
+def _submit_and_confirm(request, invoice):
+    """Envoie le brouillon à la DGI puis le confirme. Retourne True si la facture est confirmée.
+
+    * un verrou (brouillon -> en attente, en une seule requête SQL) empêche la double confirmation ;
+    * le total calculé ici est comparé à celui de la DGI : en cas d'écart, la facture reste « En attente »
+      et n'est PAS confirmée (les règles fiscales locales ne sont donc jamais imposées à la DGI).
+    """
+    company = invoice.company
+    result = invoice.compute()
+    aib_def = conf.aib_definitions().get(invoice.aib) if invoice.aib else None
+    if invoice.aib and not (aib_def and aib_def.get("api")):
+        label = aib_def["label"] if aib_def else invoice.aib
+        messages.error(
+            request,
+            f"« {label} » n'a pas de code correspondant dans l'API e-MCF : la facture reste en brouillon. "
+            "Renseignez le code API dans le paramètre EMCF_AIB (config/settings.py) ou choisissez un autre AIB.",
+        )
+        return False
+
+    claimed = Invoice.objects.filter(pk=invoice.pk, status=Invoice.Status.DRAFT).update(
+        status=Invoice.Status.PENDING
+    )
+    if not claimed:
+        messages.warning(request, "Cette facture a déjà été envoyée ou confirmée : aucune action effectuée.")
+        return False
+
+    def release():
+        Invoice.objects.filter(pk=invoice.pk).update(status=Invoice.Status.DRAFT)
+
+    data = {"type": invoice.type, "client_name": invoice.client_name, "client_ifu": invoice.client_ifu,
+            "client_contact": invoice.client_contact, "client_address": invoice.client_address,
+            "aib": aib_def["api"] if aib_def else "", "reference": invoice.reference}
+    lines = [{"name": r["name"], "price": r["unit_ttc"], "quantity": r["quantity"],
+              "tax_group": r["tax_group"]} for r in result["rows"] if r["kind"] == "item"]
+    payments = [{"method": p.method, "amount": p.amount} for p in invoice.payments.all()]
+    payload = build_payload(company.ifu, company.operator_name, data, lines, payments)
+
+    try:
+        resp = EmcfClient(company).create(payload)
+    except EmcfError as exc:
+        release()
+        messages.error(request, f"Facture rejetée par l'API e-MCF (elle reste en brouillon) : {exc}")
+        return False
+    uid = resp.get("uid") if isinstance(resp, dict) else None
+    if not uid:
+        release()
+        messages.error(request, f"Réponse inattendue de l'API (pas d'uid) : {resp}")
+        return False
+
+    invoice.refresh_from_db()
+    invoice.uid, invoice.request_payload, invoice.create_response = uid, payload, resp
+    invoice.save(update_fields=["uid", "request_payload", "create_response"])
+
+    api_total = resp.get("total")
+    if api_total is not None:
+        try:
+            gap = abs(Decimal(str(api_total)) - invoice.total)
+        except Exception:
+            gap = None
+        if gap is not None and gap > conf.TOTAL_TOLERANCE:
+            messages.warning(
+                request,
+                f"Écart de total : {invoice.total} calculé ici, {api_total} calculé par la DGI. "
+                "La facture est restée EN ATTENTE et n'a pas été confirmée. Vérifiez les règles du groupe de "
+                "taxe / de l'AIB utilisés, puis annulez-la (puis refaites-la) ou confirmez-la si l'écart est attendu.",
+            )
+            return False
+    try:
+        _confirm_invoice(invoice)
+    except EmcfError as exc:
+        messages.warning(request, f"Facture envoyée mais confirmation impossible (statut « En attente ») : {exc}")
+        return False
+    messages.success(request, "Facture confirmée : éléments de sécurité DGI enregistrés.")
+    return True
 
 
 @login_required
-def invoice_create(request):
+def invoice_editor(request, pk=None):
+    """Création d'une facture ou édition d'un brouillon : brouillon, prévisualisation ou confirmation."""
+    invoice = None
+    if pk:
+        invoice = get_object_or_404(Invoice, pk=pk)
+        if not invoice.is_draft:
+            messages.warning(
+                request,
+                "Seul un brouillon peut être modifié. Pour une facture envoyée : « Modifier n° / note », "
+                "ou émettez un avoir.",
+            )
+            return redirect("invoice_detail", pk=pk)
     if not CompanySettings.objects.exists():
         messages.warning(request, "Ajoutez d'abord la société qui émettra les factures.")
         return redirect("company_create")
 
     if request.method != "POST":
-        initial = {}
-        source = None
-        if request.GET.get("from"):
-            source = get_object_or_404(Invoice, pk=request.GET["from"])
-        if source:  # avoir pré-rempli à partir d'une facture
-            issuer = source.issuer
-            initial.update({
-                "company": issuer.pk if issuer else None,
-                "client": source.client_id,
-                "type": "EA" if source.type in ("EV", "EA") else "FA",
-                "reference": source.uid,
-                "aib": source.aib,
-            })
-            if issuer:
-                initial["internal_number"] = next_internal_number(issuer, initial["type"])
-                initial["payment_communication"] = initial["internal_number"]
-            items = ItemFormSet(prefix="items", initial=[
-                {"name": i.name, "price": i.price, "quantity": i.quantity, "tax_group": i.tax_group}
-                for i in source.items.all()
-            ])
+        source = get_object_or_404(Invoice, pk=request.GET["from"]) if request.GET.get("from") else None
+        if invoice or source:
+            form_initial, items_initial, pays_initial = _initial_from_invoice(invoice or source, credit_note=bool(source))
         else:
+            form_initial, items_initial, pays_initial = {}, [{"kind": "item", "quantity": 1, "tax_group": "B"}], []
             if request.GET.get("company"):
-                initial["company"] = request.GET["company"]
+                form_initial["company"] = request.GET["company"]
             elif CompanySettings.objects.count() == 1:
-                initial["company"] = CompanySettings.objects.first().pk
+                form_initial["company"] = CompanySettings.objects.first().pk
             if request.GET.get("client"):
-                initial["client"] = request.GET["client"]
-            chosen = CompanySettings.objects.filter(pk=initial.get("company") or 0).first()
+                form_initial["client"] = request.GET["client"]
+                chosen_client = Client.objects.filter(pk=request.GET["client"]).first()
+                if chosen_client:
+                    form_initial["shipping_address"] = chosen_client.shipping_address
+            chosen = CompanySettings.objects.filter(pk=form_initial.get("company") or 0).first()
             if chosen:
-                initial["internal_number"] = next_internal_number(chosen, "FV")
-                initial["payment_communication"] = initial["internal_number"]
-            items = ItemFormSet(prefix="items")
-        return _invoice_form_response(
-            request, InvoiceForm(initial=initial), items, PaymentFormSet(prefix="pays")
+                form_initial["internal_number"] = next_internal_number(chosen, "FV")
+                form_initial["payment_communication"] = form_initial["internal_number"]
+        return _editor_response(
+            request, InvoiceForm(initial=form_initial, invoice_pk=pk),
+            ItemFormSet(prefix="items", initial=items_initial),
+            PaymentFormSet(prefix="pays", initial=pays_initial), invoice,
         )
 
-    form = InvoiceForm(request.POST)
+    action = request.POST.get("action", "draft")
+    form = InvoiceForm(request.POST, invoice_pk=pk)
     items = ItemFormSet(request.POST, prefix="items")
     pays = PaymentFormSet(request.POST, prefix="pays")
-    if not (form.is_valid() and items.is_valid() and pays.is_valid()):
-        return _invoice_form_response(request, form, items, pays)
+    if not all([form.is_valid(), items.is_valid(), pays.is_valid()]):  # tous évalués : toutes les erreurs s'affichent
+        messages.error(request, "Certains champs sont invalides : corrigez-les puis recommencez.")
+        return _editor_response(request, form, items, pays, invoice)
 
     d = form.cleaned_data
     company, client = d["company"], d["client"]
-    if not company.ifu:
-        messages.error(request, f"Renseignez d'abord l'IFU de la société « {company.name} ».")
-        return _invoice_form_response(request, form, items, pays)
-
-    item_rows = [
-        f.cleaned_data for f in items.forms
-        if f.cleaned_data and not f.cleaned_data.get("DELETE")
-    ]
-    pay_rows = [
-        f.cleaned_data for f in pays.forms
-        if f.cleaned_data and not f.cleaned_data.get("DELETE") and f.cleaned_data.get("amount")
-    ]
-    total = sum((r["price"] * r["quantity"] for r in item_rows), Decimal(0))
-    total = total.quantize(Decimal("1"), rounding=ROUND_HALF_UP)
-
-    if pay_rows:
-        paid = sum((p["amount"] for p in pay_rows), Decimal(0))
-        if paid != total:
-            messages.error(
-                request,
-                f"La somme des paiements ({paid}) doit être égale au total de la facture ({total}).",
-            )
-            return _invoice_form_response(request, form, items, pays)
-    else:
-        pay_rows = [{"method": "ESPECES", "amount": total}]
-
-    number = d["internal_number"].strip() or next_internal_number(company, d["type"])
-    communication = d["payment_communication"].strip() or number
-
-    client_data = {
-        "client_name": client.name if client else "",
-        "client_ifu": client.ifu if client else "",
-        "client_contact": client.contact if client else "",
-        "client_address": client.address if client else "",
-    }
-    payload = build_payload(
-        company.ifu, company.operator_name, {**d, **client_data}, item_rows, pay_rows
+    rows = _rows_from_formset(items)
+    result = calc.compute_document(
+        rows, conf.tax_rates(), aib_rate=conf.aib_rate(d["aib"]),
+        aib_added=conf.AIB_ADDED_TO_TOTAL, tax_labels=dict(TAX_GROUPS),
     )
 
-    try:
-        resp = EmcfClient(company).create(payload)
-    except EmcfError as exc:
-        messages.error(request, f"Facture rejetée par l'API e-MCF : {exc}")
-        return _invoice_form_response(request, form, items, pays)
+    if action == "preview":  # proforma : rien n'est enregistré, aucun statut n'est modifié
+        return render(request, "facturation/invoice_print.html",
+                      {"doc": documents.doc_from_form(company, client, d, result), "qr": None})
 
-    uid = resp.get("uid") if isinstance(resp, dict) else None
-    if not uid:
-        messages.error(request, f"Réponse inattendue de l'API (pas d'uid) : {resp}")
-        return _invoice_form_response(request, form, items, pays)
+    problems = []
+    if action == "confirm":
+        if result["item_count"] < 1:
+            problems.append("Ajoutez au moins une ligne d'article avant de confirmer.")
+        if result["total_payable"] <= 0:
+            problems.append("Le total de la facture doit être supérieur à 0.")
+        if not company.ifu:
+            problems.append(f"Renseignez d'abord l'IFU de la société « {company.name} ».")
 
-    api_total = resp.get("total")
-    try:
-        total_saved = Decimal(str(api_total)) if api_total is not None else total
-    except Exception:
-        total_saved = total
-
-    with transaction.atomic():
-        invoice = Invoice.objects.create(
-            company=company, client=client, uid=uid, type=d["type"],
-            internal_number=number, payment_communication=communication, note=d["note"],
-            reference=d["reference"], aib=d["aib"], total=total_saved,
-            request_payload=payload, create_response=resp, created_by=request.user,
-            **client_data,
-        )
-        for r in item_rows:
-            InvoiceItem.objects.create(
-                invoice=invoice, name=r["name"], price=r["price"],
-                quantity=r["quantity"], tax_group=r["tax_group"],
+    pay_rows = [
+        {"method": f.cleaned_data["method"], "amount": f.cleaned_data["amount"]}
+        for f in pays.forms
+        if f.cleaned_data and not f.cleaned_data.get("DELETE") and f.cleaned_data.get("amount")
+    ]
+    if pay_rows and action == "confirm":
+        paid = sum((p["amount"] for p in pay_rows), Decimal(0))
+        if paid != result["total_payable"]:
+            problems.append(
+                f"La somme des paiements ({paid}) doit être égale au total de la facture ({result['total_payable']})."
             )
-        for p in pay_rows:
-            Payment.objects.create(invoice=invoice, method=p["method"], amount=p["amount"])
+    elif not pay_rows and action == "confirm":
+        pay_rows = [{"method": "ESPECES", "amount": result["total_payable"]}]
+    if problems:
+        for text in problems:
+            messages.error(request, text)
+        return _editor_response(request, form, items, pays, invoice)
 
-    messages.success(request, "Facture envoyée à la DGI (en attente de confirmation).")
-    if d["confirm_now"]:
-        try:
-            _confirm_invoice(invoice)
-            messages.success(request, "Facture confirmée.")
-        except EmcfError as exc:
-            messages.warning(request, f"Confirmation impossible : {exc}")
+    invoice = _save_invoice(invoice, d, result, pay_rows, request.user)
+    if action == "confirm":
+        _submit_and_confirm(request, invoice)
+    else:
+        messages.success(request, "Brouillon enregistré : vous pouvez le rouvrir et le compléter.")
     return redirect("invoice_detail", pk=invoice.pk)
 
 
@@ -244,6 +390,8 @@ def invoice_detail(request, pk):
     invoice = get_object_or_404(Invoice.objects.select_related("company", "client"), pk=pk)
     return render(request, "facturation/invoice_detail.html", {
         "invoice": invoice,
+        "doc": documents.doc_from_invoice(invoice),
+        "payment_statuses": Invoice.PaymentStatus.choices,
         "payload_json": _pretty(invoice.request_payload),
         "details_json": _pretty(invoice.api_details) if invoice.api_details else "",
         "security_json": _pretty(invoice.security) if invoice.security else "",
@@ -254,6 +402,9 @@ def invoice_detail(request, pk):
 @require_POST
 def invoice_refresh(request, pk):
     invoice = get_object_or_404(Invoice, pk=pk)
+    if not invoice.uid:
+        messages.warning(request, "Ce brouillon n'a pas été envoyé à la DGI : rien à actualiser.")
+        return redirect("invoice_detail", pk=pk)
     try:
         invoice.api_details = EmcfClient(invoice.issuer).details(invoice.uid)
         invoice.save(update_fields=["api_details"])
@@ -266,9 +417,10 @@ def invoice_refresh(request, pk):
 @login_required
 @require_POST
 def invoice_confirm(request, pk):
+    """Confirme une facture EN ATTENTE (déjà envoyée à la DGI). Un brouillon se confirme dans l'éditeur."""
     invoice = get_object_or_404(Invoice, pk=pk)
     if invoice.status != Invoice.Status.PENDING:
-        messages.warning(request, "Seule une facture en attente peut être confirmée.")
+        messages.warning(request, "Seule une facture en attente peut être confirmée ici.")
     else:
         try:
             _confirm_invoice(invoice)
@@ -282,7 +434,7 @@ def invoice_confirm(request, pk):
 @require_POST
 def invoice_cancel(request, pk):
     invoice = get_object_or_404(Invoice, pk=pk)
-    if invoice.status != Invoice.Status.PENDING:
+    if invoice.status != Invoice.Status.PENDING or not invoice.uid:
         messages.warning(
             request,
             "Seule une facture en attente peut être annulée. Pour corriger une facture "
@@ -300,13 +452,39 @@ def invoice_cancel(request, pk):
 
 
 @login_required
+@require_POST
+def invoice_delete(request, pk):
+    """Supprime un brouillon (jamais envoyé à la DGI). Les autres factures ne se suppriment pas."""
+    invoice = get_object_or_404(Invoice, pk=pk)
+    if not invoice.is_draft:
+        messages.error(request, "Seul un brouillon peut être supprimé.")
+        return redirect("invoice_detail", pk=pk)
+    invoice.delete()
+    messages.success(request, "Brouillon supprimé.")
+    return redirect("invoice_list")
+
+
+@login_required
+@require_POST
+def invoice_payment(request, pk):
+    """Change le statut de paiement (suivi manuel : l'application ne gère pas encore de règlements)."""
+    invoice = get_object_or_404(Invoice, pk=pk)
+    new_status = request.POST.get("payment_status", "")
+    if new_status not in dict(Invoice.PaymentStatus.choices):
+        messages.error(request, "Statut de paiement inconnu.")
+    else:
+        invoice.payment_status = new_status
+        invoice.save(update_fields=["payment_status"])
+        messages.success(request, f"Statut de paiement : {invoice.get_payment_status_display()}.")
+    return redirect("invoice_detail", pk=pk)
+
+
+@login_required
 def invoice_print(request, pk):
     invoice = get_object_or_404(Invoice, pk=pk)
     return render(request, "facturation/invoice_print.html", {
-        "invoice": invoice,
-        "company": invoice.issuer,
+        "doc": documents.doc_from_invoice(invoice),
         "qr": _qr_data_uri(invoice.qr_text),
-        "tax_summary": invoice.tax_summary(),
     })
 
 
@@ -316,7 +494,9 @@ def client_list(request):
     q = request.GET.get("q", "").strip()
     qs = Client.objects.annotate(nb_invoices=Count("invoices"))
     if q:
-        qs = qs.filter(Q(name__icontains=q) | Q(ifu__icontains=q) | Q(contact__icontains=q))
+        qs = qs.filter(
+            Q(name__icontains=q) | Q(ifu__icontains=q) | Q(contact__icontains=q) | Q(code__icontains=q)
+        )
     return render(request, "facturation/client_list.html", {"clients": qs, "q": q})
 
 
@@ -478,10 +658,13 @@ def _create_from_api(company, uid, details, user):
             client_contact=str(cl.get("contact") or "")[:100], client_address=str(cl.get("address") or ""),
             total=total, request_payload=details, api_details=details, created_by=user,
         )
-        for name, price, qty, group in items:
-            InvoiceItem.objects.create(invoice=invoice, name=name, price=price, quantity=qty, tax_group=group)
+        for position, (name, price, qty, group) in enumerate(items):
+            InvoiceItem.objects.create(
+                invoice=invoice, position=position, name=name, price=price, quantity=qty, tax_group=group
+            )
         for method, amount in pays:
             Payment.objects.create(invoice=invoice, method=method, amount=amount)
+        invoice.recompute_totals()
     return invoice
 
 

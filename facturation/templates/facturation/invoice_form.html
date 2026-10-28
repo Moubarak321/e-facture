@@ -1,40 +1,70 @@
 {% extends "facturation/base.html" %}
-{% block title %}Nouvelle facture{% endblock %}
+{% block title %}{% if invoice %}Modifier le brouillon{% else %}Nouvelle facture{% endif %}{% endblock %}
 {% block content %}
-<h1 class="h3 mb-3">{% if form.initial.reference %}Nouvel avoir{% else %}Nouvelle facture{% endif %}</h1>
-<form method="post">
+<h1 class="h3 mb-3">
+  {% if invoice %}Brouillon {{ invoice.internal_number }}{% elif form.initial.reference %}Nouvel avoir{% else %}Nouvelle facture{% endif %}
+  {% if invoice %}<span class="badge bg-info text-dark fs-6">Brouillon</span>{% endif %}
+</h1>
+<form method="post" id="invoice-form">
   {% csrf_token %}
   {{ form.non_field_errors }}
+
   <div class="card mb-3"><div class="card-header">Qui émet, pour qui ?</div><div class="card-body"><div class="row">
     <div class="col-md-6">{% with field=form.company %}{% include "facturation/_field.html" %}{% endwith %}</div>
     <div class="col-md-6">
       {% with field=form.client %}{% include "facturation/_field.html" %}{% endwith %}
       <a class="small" href="{% url 'client_create' %}?next={% url 'invoice_create' %}">+ Ajouter un nouveau client</a>
     </div>
+    <div class="col-12 mt-2">{% with field=form.shipping_address %}{% include "facturation/_field.html" %}{% endwith %}</div>
   </div></div></div>
 
   <div class="card mb-3"><div class="card-header">Facture</div><div class="card-body"><div class="row">
-    <div class="col-md-4">{% with field=form.type %}{% include "facturation/_field.html" %}{% endwith %}</div>
-    <div class="col-md-5">{% with field=form.reference %}{% include "facturation/_field.html" %}{% endwith %}</div>
-    <div class="col-md-3">{% with field=form.aib %}{% include "facturation/_field.html" %}{% endwith %}</div>
+    <div class="col-md-3">{% with field=form.invoice_date %}{% include "facturation/_field.html" %}{% endwith %}</div>
+    <div class="col-md-3">{% with field=form.due_date %}{% include "facturation/_field.html" %}{% endwith %}</div>
+    <div class="col-md-3">{% with field=form.type %}{% include "facturation/_field.html" %}{% endwith %}</div>
+    <div class="col-md-3">{% with field=form.payment_status %}{% include "facturation/_field.html" %}{% endwith %}</div>
+    <div class="col-md-6">{% with field=form.reference %}{% include "facturation/_field.html" %}{% endwith %}</div>
+    <div class="col-md-6">{% with field=form.aib %}{% include "facturation/_field.html" %}{% endwith %}</div>
     <div class="col-md-4">{% with field=form.internal_number %}{% include "facturation/_field.html" %}{% endwith %}</div>
     <div class="col-md-4">{% with field=form.payment_communication %}{% include "facturation/_field.html" %}{% endwith %}</div>
     <div class="col-md-4">{% with field=form.note %}{% include "facturation/_field.html" %}{% endwith %}</div>
   </div></div></div>
 
-  <div class="card mb-3"><div class="card-header d-flex justify-content-between">
-    <span>Articles (prix TTC)</span>
-    <button type="button" id="items-add" class="btn btn-sm btn-outline-primary">+ Ajouter une ligne</button>
-  </div><div class="card-body">
-    {{ items.management_form }}
-    {{ items.non_form_errors }}
-    <table class="table align-middle">
-      <thead><tr><th>Désignation</th><th>Prix unitaire</th><th>Qté</th><th>Taxe</th><th></th></tr></thead>
-      <tbody id="items-rows">{% for f in items %}{% include "facturation/_item_row.html" with form=f %}{% endfor %}</tbody>
-    </table>
-    <div class="text-end fw-bold">Total TTC : <span id="total">0</span> FCFA</div>
-    <template id="items-empty">{% include "facturation/_item_row.html" with form=items.empty_form %}</template>
-  </div></div>
+  <div class="card mb-3">
+    <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+      <span>Lignes de la facture <small class="text-muted">(prix HT saisis ; le TTC est calculé)</small></span>
+      <span class="d-flex flex-wrap gap-2">
+        <button type="button" class="btn btn-sm btn-outline-primary" data-add="item">+ Ajouter une ligne</button>
+        <button type="button" class="btn btn-sm btn-outline-dark" data-add="section">+ Ajouter une section</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-add="note">+ Ajouter une note</button>
+      </span>
+    </div>
+    <div class="card-body">
+      {{ items.management_form }}
+      {{ items.non_form_errors }}
+      <div class="table-responsive">
+      <table class="table align-middle" id="lines-table">
+        <thead><tr><th></th><th>Désignation</th><th>Quantité</th><th>Prix HT</th><th>Taxe</th><th class="text-end">Prix TTC</th><th></th></tr></thead>
+        <tbody id="lines-body">{% for f in items %}{% include "facturation/_item_row.html" with form=f %}{% endfor %}</tbody>
+      </table>
+      </div>
+      <template id="tpl-item">{% include "facturation/_item_row.html" with form=items.empty_form kind="item" %}</template>
+      <template id="tpl-section">{% include "facturation/_item_row.html" with form=items.empty_form kind="section" %}</template>
+      <template id="tpl-note">{% include "facturation/_item_row.html" with form=items.empty_form kind="note" %}</template>
+
+      <div class="row justify-content-end"><div class="col-md-6 col-lg-5">
+        <div class="border rounded p-3 bg-white small" id="recap">
+          <div id="rc-groups" class="mb-2 text-muted"></div>
+          <div class="d-flex justify-content-between"><span>Total HT</span><b id="rc-ht">0</b></div>
+          <div class="d-flex justify-content-between"><span>Taxes</span><b id="rc-tax">0</b></div>
+          <div class="d-flex justify-content-between"><span>Total TTC</span><b id="rc-ttc">0</b></div>
+          <div class="d-flex justify-content-between d-none" id="rc-aib-row"><span id="rc-aib-label">AIB</span><b id="rc-aib">0</b></div>
+          <div class="d-flex justify-content-between border-top mt-1 pt-1 fs-6"><span>Total à payer</span><b id="rc-total">0</b></div>
+          <div class="text-muted mt-2">Estimation en direct : le serveur recalcule tous les montants à l'enregistrement.</div>
+        </div>
+      </div></div>
+    </div>
+  </div>
 
   <div class="card mb-3"><div class="card-header d-flex justify-content-between">
     <span>Paiements <small class="text-muted">(laisser vide = espèces pour le total)</small></span>
@@ -48,72 +78,215 @@
     <template id="pays-empty">{% include "facturation/_pay_row.html" with form=pays.empty_form %}</template>
   </div></div>
 
-  <div class="form-check mb-3">
-    {{ form.confirm_now }}
-    <label class="form-check-label" for="{{ form.confirm_now.id_for_label }}">{{ form.confirm_now.label }}</label>
+  <div class="d-flex flex-wrap gap-2 mb-5">
+    <button type="submit" name="action" value="draft" class="btn btn-outline-secondary">Enregistrer le brouillon</button>
+    <button type="submit" name="action" value="preview" formtarget="_blank" class="btn btn-outline-primary">Prévisualiser la facture</button>
+    <button type="submit" name="action" value="confirm" class="btn btn-success">Confirmer la facture</button>
+    <a class="btn btn-link" href="{% if invoice %}{% url 'invoice_detail' invoice.pk %}{% else %}{% url 'invoice_list' %}{% endif %}">Annuler</a>
   </div>
-  <button class="btn btn-primary">Envoyer à la DGI</button>
-  <a class="btn btn-link" href="{% url 'invoice_list' %}">Annuler</a>
 </form>
+
+{{ tax_rates|json_script:"tax-rates" }}
+{{ tax_labels|json_script:"tax-labels" }}
+{{ aib_rates|json_script:"aib-rates" }}
+{{ client_shipping|json_script:"client-shipping" }}
+{{ unverified_groups|json_script:"unverified-groups" }}
 {% endblock %}
 
 {% block scripts %}
 <script>
-function setupFormset(prefix) {
-  const total = document.getElementById('id_' + prefix + '-TOTAL_FORMS');
-  const body = document.getElementById(prefix + '-rows');
-  const tpl = document.getElementById(prefix + '-empty').innerHTML;
-  document.getElementById(prefix + '-add').addEventListener('click', () => {
-    const idx = parseInt(total.value, 10);
-    body.insertAdjacentHTML('beforeend', tpl.replace(/__prefix__/g, idx));
-    total.value = idx + 1;
-    updateTotal();
-  });
-  body.addEventListener('click', (e) => {
-    const btn = e.target.closest('.remove-row');
-    if (!btn) return;
-    const row = btn.closest('tr');
-    row.querySelector('input[type=checkbox][name$="-DELETE"]').checked = true;
-    row.classList.add('d-none');
-    updateTotal();
-  });
-}
-function updateTotal() {
-  let sum = 0;
-  document.querySelectorAll('#items-rows tr:not(.d-none)').forEach((tr) => {
-    const p = parseFloat(tr.querySelector('input[name$="-price"]').value) || 0;
-    const q = parseFloat(tr.querySelector('input[name$="-quantity"]').value) || 0;
-    sum += p * q;
-  });
-  document.getElementById('total').textContent = Math.round(sum).toLocaleString('fr-FR');
-}
-// --- numéro de facture proposé automatiquement (modifiable) ---
-const companySel = document.getElementById('id_company');
-const typeSel = document.getElementById('id_type');
-const numInput = document.getElementById('id_internal_number');
-const comInput = document.getElementById('id_payment_communication');
-let autoNum = numInput.value;
-async function refreshNumber() {
-  if (!companySel.value) return;
-  try {
-    const r = await fetch("{% url 'next_number' %}?company=" + companySel.value + "&type=" + typeSel.value);
-    const data = await r.json();
-    if (!data.number) return;
-    if (numInput.value === '' || numInput.value === autoNum) {
-      const followNumber = comInput.value === '' || comInput.value === autoNum;
-      numInput.value = data.number;
-      if (followNumber) comInput.value = data.number;
-    }
-    autoNum = data.number;
-  } catch (e) { /* hors ligne : le serveur proposera un numéro à l'enregistrement */ }
-}
-companySel.addEventListener('change', refreshNumber);
-typeSel.addEventListener('change', refreshNumber);
-if (!numInput.value) refreshNumber();
+(function () {
+  const TAX = JSON.parse(document.getElementById('tax-rates').textContent);
+  const TAXLBL = JSON.parse(document.getElementById('tax-labels').textContent);
+  const AIB = JSON.parse(document.getElementById('aib-rates').textContent);
+  const SHIP = JSON.parse(document.getElementById('client-shipping').textContent);
+  const UNVERIFIED = JSON.parse(document.getElementById('unverified-groups').textContent);
+  const AIB_ADDED = {{ aib_added|yesno:"true,false" }};
+  const form = document.getElementById('invoice-form');
+  const body = document.getElementById('lines-body');
+  const totalForms = document.getElementById('id_items-TOTAL_FORMS');
 
-setupFormset('items');
-setupFormset('pays');
-document.getElementById('items-rows').addEventListener('input', updateTotal);
-updateTotal();
+  // ---- arithmétique décimale exacte (mêmes règles d'arrondi que le serveur : demi supérieur) ----
+  function parseScaled(text, dec) {
+    const s = String(text).trim().replace(',', '.');
+    if (!/^\d*\.?\d*$/.test(s) || s === '' || s === '.') return null;
+    const parts = s.split('.');
+    const frac = ((parts[1] || '') + '0'.repeat(dec)).slice(0, dec);
+    return BigInt(parts[0] || '0') * (10n ** BigInt(dec)) + BigInt(frac || '0');
+  }
+  function rnd(num, den) { return (num * 2n + den) / (2n * den); }
+  function group3(str) { return str.replace(/\B(?=(\d{3})+(?!\d))/g, '\u202f'); }
+  function fmtCents(c) {
+    const neg = c < 0n; if (neg) c = -c;
+    const i = c / 100n, f = c % 100n;
+    return (neg ? '-' : '') + group3(i.toString()) + (f === 0n ? '' : ',' + f.toString().padStart(2, '0'));
+  }
+  function fmtInt(v) { return (v < 0n ? '-' : '') + group3((v < 0n ? -v : v).toString()); }
+
+  function visibleRows() {
+    return Array.from(body.querySelectorAll('tr.line-row')).filter(tr => !tr.classList.contains('d-none'));
+  }
+
+  function recalc() {
+    let sumHt = 0n, sumTtc = 0n, cur = null;
+    const groups = {}, sections = [];
+    visibleRows().forEach((tr, idx) => {
+      const order = tr.querySelector('input[name$="-ORDER"]');
+      if (order) order.value = idx + 1;               // l'ordre d'affichage est celui de l'écran
+      const kind = tr.dataset.kind;
+      if (kind === 'section') {
+        cur = { tr: tr, ht: 0n, ttc: 0n, n: 0 };
+        sections.push(cur);
+      } else if (kind === 'item') {
+        const g = tr.querySelector('select[name$="-tax_group"]').value;
+        const warn = tr.querySelector('.tax-warn');
+        if (warn) warn.classList.toggle('d-none', !UNVERIFIED.includes(g));
+        const rate100 = BigInt(Math.round((TAX[g] || 0) * 100));
+        const uht = parseScaled(tr.querySelector('input[name$="-unit_ht"]').value, 2);
+        const qty = parseScaled(tr.querySelector('input[name$="-quantity"]').value, 3);
+        const out = tr.querySelector('.ttc');
+        if (uht === null || qty === null) { out.textContent = ''; return; }
+        const unitTtc = rnd(uht * (10000n + rate100), 10000n);
+        const lineTtc = rnd(qty * unitTtc, 1000n), lineHt = rnd(qty * uht, 1000n);
+        out.textContent = fmtCents(lineTtc);
+        sumHt += lineHt; sumTtc += lineTtc;
+        const gr = groups[g] || (groups[g] = { ht: 0n, ttc: 0n });
+        gr.ht += lineHt; gr.ttc += lineTtc;
+        if (cur) { cur.ht += lineHt; cur.ttc += lineTtc; cur.n += 1; }
+      }
+    });
+    sections.forEach(s => {
+      const out = s.tr.querySelector('.sec-subtotal');
+      out.textContent = s.n ? 'Sous-total : ' + fmtCents(s.ttc) + ' TTC (HT ' + fmtCents(s.ht) + ')' : '';
+    });
+    const ttc = rnd(sumTtc, 100n), ht = rnd(sumHt, 100n), tax = ttc - ht;
+    const aibCode = document.getElementById('id_aib').value;
+    const aibRate = aibCode ? BigInt(Math.round((AIB[aibCode] || 0) * 100)) : 0n;
+    const aib = aibRate ? rnd(ht * aibRate, 10000n) : 0n;
+    document.getElementById('rc-ht').textContent = fmtInt(ht);
+    document.getElementById('rc-tax').textContent = fmtInt(tax);
+    document.getElementById('rc-ttc').textContent = fmtInt(ttc);
+    document.getElementById('rc-total').textContent = fmtInt(ttc + (AIB_ADDED ? aib : 0n));
+    document.getElementById('rc-aib-row').classList.toggle('d-none', !aibCode);
+    document.getElementById('rc-aib-label').textContent =
+      'AIB ' + (aibCode ? (AIB[aibCode] + ' % sur HT' + (AIB_ADDED ? '' : ' (affiché à part)')) : '');
+    document.getElementById('rc-aib').textContent = fmtInt(aib);
+    const lines = Object.keys(groups).sort().map(g => {
+      const gt = groups[g];
+      return '<div>' + (TAXLBL[g] || g) + ' : HT ' + fmtCents(gt.ht) + ' · taxe ' + fmtCents(gt.ttc - gt.ht) + '</div>';
+    });
+    document.getElementById('rc-groups').innerHTML = lines.join('');
+  }
+
+  // ---- ajout / suppression / déplacement des lignes, sections et notes ----
+  function addRow(kind) {
+    const idx = parseInt(totalForms.value, 10);
+    body.insertAdjacentHTML('beforeend', document.getElementById('tpl-' + kind).innerHTML.replace(/__prefix__/g, idx));
+    totalForms.value = idx + 1;
+    recalc();
+  }
+  function markDeleted(tr) {
+    tr.querySelector('input[type=checkbox][name$="-DELETE"]').checked = true;
+    tr.classList.add('d-none');
+  }
+  function membersOf(sectionRow) {          // lignes et notes jusqu'à la section suivante
+    const rows = visibleRows(), out = [];
+    for (let i = rows.indexOf(sectionRow) + 1; i < rows.length && rows[i].dataset.kind !== 'section'; i++) out.push(rows[i]);
+    return out;
+  }
+  document.querySelectorAll('[data-add]').forEach(b => b.addEventListener('click', () => addRow(b.dataset.add)));
+
+  body.addEventListener('click', (e) => {
+    const tr = e.target.closest('tr.line-row');
+    if (!tr) return;
+    if (e.target.closest('.btn-up')) {
+      const rows = visibleRows(), i = rows.indexOf(tr);
+      if (i > 0) body.insertBefore(tr, rows[i - 1]);
+    } else if (e.target.closest('.btn-down')) {
+      const rows = visibleRows(), i = rows.indexOf(tr);
+      if (i < rows.length - 1) body.insertBefore(rows[i + 1], tr);
+    } else if (e.target.closest('.btn-untitle')) {
+      markDeleted(tr);                       // supprime seulement le titre : les lignes sont conservées
+    } else if (e.target.closest('.btn-del')) {
+      if (tr.dataset.kind === 'section') {
+        const members = membersOf(tr);
+        if (members.length) {
+          if (!confirm('Cette section contient ' + members.length + ' élément(s).\nOK : supprimer la section ET ces éléments.\nAnnuler : tout conserver (« Retirer le titre » garde les lignes).')) return;
+          members.forEach(markDeleted);
+        }
+      }
+      markDeleted(tr);
+    }
+    recalc();
+  });
+  body.addEventListener('input', recalc);
+  body.addEventListener('change', recalc);
+  document.getElementById('id_aib').addEventListener('change', recalc);
+
+  // ---- paiements ----
+  (function () {
+    const total = document.getElementById('id_pays-TOTAL_FORMS');
+    const rows = document.getElementById('pays-rows');
+    document.getElementById('pays-add').addEventListener('click', () => {
+      const idx = parseInt(total.value, 10);
+      rows.insertAdjacentHTML('beforeend', document.getElementById('pays-empty').innerHTML.replace(/__prefix__/g, idx));
+      total.value = idx + 1;
+    });
+    rows.addEventListener('click', (e) => {
+      const btn = e.target.closest('.remove-row');
+      if (!btn) return;
+      const row = btn.closest('tr');
+      row.querySelector('input[type=checkbox][name$="-DELETE"]').checked = true;
+      row.classList.add('d-none');
+    });
+  })();
+
+  // ---- n° de facture proposé automatiquement (modifiable) ----
+  const companySel = document.getElementById('id_company');
+  const typeSel = document.getElementById('id_type');
+  const numInput = document.getElementById('id_internal_number');
+  const comInput = document.getElementById('id_payment_communication');
+  let autoNum = numInput.value;
+  async function refreshNumber() {
+    if (!companySel.value || {{ invoice|yesno:"true,false" }}) return;   // un brouillon garde son numéro
+    try {
+      const r = await fetch("{% url 'next_number' %}?company=" + companySel.value + "&type=" + typeSel.value);
+      const data = await r.json();
+      if (!data.number) return;
+      if (numInput.value === '' || numInput.value === autoNum) {
+        const follow = comInput.value === '' || comInput.value === autoNum;
+        numInput.value = data.number;
+        if (follow) comInput.value = data.number;
+      }
+      autoNum = data.number;
+    } catch (err) { /* hors ligne : le serveur proposera un numéro à l'enregistrement */ }
+  }
+  companySel.addEventListener('change', refreshNumber);
+  typeSel.addEventListener('change', refreshNumber);
+  if (!numInput.value) refreshNumber();
+
+  // ---- adresse d'expédition reprise de la fiche client (modifiable) ----
+  const clientSel = document.getElementById('id_client');
+  const shipInput = document.getElementById('id_shipping_address');
+  let autoShip = shipInput.value;
+  clientSel.addEventListener('change', () => {
+    if (shipInput.value === '' || shipInput.value === autoShip) {
+      autoShip = SHIP[clientSel.value] || '';
+      shipInput.value = autoShip;
+    }
+  });
+
+  // ---- soumission : ordre des lignes, confirmation explicite, anti double-clic ----
+  form.addEventListener('submit', (e) => {
+    recalc();
+    const action = e.submitter ? e.submitter.value : 'draft';
+    if (action === 'confirm') {
+      if (!confirm('Confirmer la facture ?\nElle sera envoyée à la DGI et ne pourra plus être modifiée.')) { e.preventDefault(); return; }
+      setTimeout(() => form.querySelectorAll('button[type=submit]').forEach(b => { b.disabled = true; }), 0);
+    }
+  });
+
+  recalc();
+})();
 </script>
 {% endblock %}

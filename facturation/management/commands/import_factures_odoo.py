@@ -238,6 +238,7 @@ class Command(BaseCommand):
                         internal_number=number,
                         payment_communication=(text(first.get("payment_reference")) or number)[:200],
                         note=note, reference=text(first.get("uid_facture_origine"))[:64],
+                        invoice_date=created.date() if created else None,
                         client_name=text(first.get("client"))[:200],
                         client_ifu=normalize_ifu(text(first.get("ifu_client")))[0],
                         client_contact=text(first.get("tel_client"))[:100],
@@ -251,13 +252,15 @@ class Command(BaseCommand):
                             "dateTime": certified.isoformat() if certified else "",
                         },
                     )
-                    for name, price, qty, group in items:
+                    for position, (name, price, qty, group) in enumerate(items):
                         InvoiceItem.objects.create(
-                            invoice=invoice, name=name, price=price, quantity=qty, tax_group=group
+                            invoice=invoice, position=position, name=name, price=price,
+                            quantity=qty, tax_group=group,
                         )
                     Payment.objects.create(
                         invoice=invoice, method=method if method in PAYMENT_CODES else "AUTRE", amount=total
                     )
+                    invoice.recompute_totals()   # montants HT / taxes recalculés depuis les lignes
                 stats["credit" if inv_type == "FA" else "invoices"] += 1
 
             if opts["dry_run"]:

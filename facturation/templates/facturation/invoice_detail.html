@@ -3,13 +3,24 @@
 {% block title %}{{ invoice }}{% endblock %}
 {% block content %}
 <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
-  <h1 class="h3 m-0">{{ invoice.get_type_display }}
-    <span class="badge {{ invoice.badge_class }} fs-6">{{ invoice.get_status_display }}</span></h1>
+  <h1 class="h3 m-0">{{ invoice.get_type_display }} {{ invoice.internal_number }}
+    <span class="badge {{ invoice.badge_class }} fs-6">{{ invoice.get_status_display }}</span>
+    <span class="badge {{ invoice.payment_badge_class }} fs-6">{{ invoice.get_payment_status_display }}</span></h1>
   <div class="d-flex flex-wrap gap-2">
+    {% if invoice.is_draft %}
+    <a class="btn btn-primary" href="{% url 'invoice_draft_edit' invoice.pk %}">Modifier le brouillon</a>
+    <a class="btn btn-outline-dark" target="_blank" href="{% url 'invoice_print' invoice.pk %}">Prévisualiser (proforma)</a>
+    <form method="post" action="{% url 'invoice_delete' invoice.pk %}"
+          onsubmit="return confirm('Supprimer définitivement ce brouillon ?');">{% csrf_token %}
+      <button class="btn btn-outline-danger">Supprimer le brouillon</button></form>
+    {% else %}
     <a class="btn btn-outline-secondary" href="{% url 'invoice_edit' invoice.pk %}">Modifier n° / note</a>
     <a class="btn btn-outline-dark" target="_blank" href="{% url 'invoice_print' invoice.pk %}">Imprimer / PDF</a>
+    {% if invoice.uid %}
     <form method="post" action="{% url 'invoice_refresh' invoice.pk %}">{% csrf_token %}
       <button class="btn btn-outline-secondary">Actualiser depuis l'API</button></form>
+    {% endif %}
+    {% endif %}
     {% if invoice.status == 'pending' %}
     <form method="post" action="{% url 'invoice_confirm' invoice.pk %}">{% csrf_token %}
       <button class="btn btn-success">Confirmer</button></form>
@@ -27,39 +38,68 @@
   <div class="col-md-6"><div class="card h-100"><div class="card-header">Informations</div>
     <ul class="list-group list-group-flush">
       <li class="list-group-item"><b>N° de facture :</b> {{ invoice.internal_number|default:"—" }}</li>
+      <li class="list-group-item"><b>Date de la facture :</b> {{ invoice.display_date|date:"d/m/Y" }}
+        {% if invoice.due_date %}· <b>Échéance :</b> {{ invoice.due_date|date:"d/m/Y" }}{% endif %}</li>
       <li class="list-group-item"><b>Communication de paiement :</b> {{ invoice.payment_communication|default:"—" }}</li>
       {% if invoice.note %}<li class="list-group-item"><b>Note :</b> {{ invoice.note|linebreaksbr }}</li>{% endif %}
       <li class="list-group-item"><b>Société émettrice :</b> {{ invoice.issuer.name|default:"—" }}</li>
-      <li class="list-group-item"><b>UID :</b> <code>{{ invoice.uid }}</code></li>
-      <li class="list-group-item"><b>Date :</b> {{ invoice.created_at|date:"d/m/Y H:i" }}</li>
+      <li class="list-group-item"><b>UID :</b> {% if invoice.uid %}<code>{{ invoice.uid }}</code>{% else %}— (non envoyé à la DGI){% endif %}</li>
       {% if invoice.reference %}<li class="list-group-item"><b>Facture d'origine :</b> <code>{{ invoice.reference }}</code></li>{% endif %}
-      {% if invoice.aib %}<li class="list-group-item"><b>AIB :</b> groupe {{ invoice.aib }}</li>{% endif %}
-      <li class="list-group-item"><b>Total TTC :</b> {{ invoice.total|money }} FCFA</li>
+      <li class="list-group-item">
+        <form method="post" action="{% url 'invoice_payment' invoice.pk %}" class="d-flex gap-2 align-items-center">
+          {% csrf_token %}<b>Paiement :</b>
+          <select name="payment_status" class="form-select form-select-sm w-auto">
+            {% for v, l in payment_statuses %}<option value="{{ v }}" {% if v == invoice.payment_status %}selected{% endif %}>{{ l }}</option>{% endfor %}
+          </select>
+          <button class="btn btn-sm btn-outline-primary">Mettre à jour</button>
+        </form>
+      </li>
     </ul></div></div>
   <div class="col-md-6"><div class="card h-100"><div class="card-header">Client</div>
     <ul class="list-group list-group-flush">
-      <li class="list-group-item">{% if invoice.client %}<a href="{% url 'client_edit' invoice.client.pk %}">{{ invoice.client_name }}</a>{% else %}{{ invoice.client_name|default:"Client de passage" }}{% endif %}</li>
+      <li class="list-group-item">{% if invoice.client %}<a href="{% url 'client_edit' invoice.client.pk %}">{{ invoice.client_name }}</a>
+        {% if invoice.client.code %}<span class="badge bg-light text-dark border">Code {{ invoice.client.code }}</span>{% endif %}
+        {% else %}{{ invoice.client_name|default:"Client de passage" }}{% endif %}</li>
       <li class="list-group-item"><b>IFU :</b> {{ invoice.client_ifu|default:"—" }}</li>
       <li class="list-group-item"><b>Contact :</b> {{ invoice.client_contact|default:"—" }}</li>
-      <li class="list-group-item">{{ invoice.client_address|default:"—" }}</li>
+      <li class="list-group-item"><b>Adresse :</b> {{ invoice.client_address|default:"—"|linebreaksbr }}</li>
+      <li class="list-group-item"><b>Expédition :</b> {{ invoice.shipping_address|default:"—"|linebreaksbr }}</li>
     </ul></div></div>
 </div>
 
-<div class="card mt-3"><div class="card-header">Articles</div>
+<div class="card mt-3"><div class="card-header">Lignes</div>
+<div class="table-responsive">
 <table class="table m-0">
-  <thead><tr><th>Désignation</th><th class="text-end">Prix</th><th class="text-end">Qté</th><th>Taxe</th><th class="text-end">Total</th></tr></thead>
+  <thead><tr><th>Désignation</th><th class="text-end">Qté</th><th class="text-end">Prix HT</th><th>Taxe</th><th class="text-end">HT</th><th class="text-end">TTC</th></tr></thead>
   <tbody>
-  {% for it in invoice.items.all %}
-    <tr><td>{{ it.name }}</td><td class="text-end">{{ it.price|money }}</td>
-        <td class="text-end">{{ it.quantity|floatformat:"-3" }}</td><td>{{ it.tax_group }}</td>
-        <td class="text-end">{{ it.line_total|money }}</td></tr>
+  {% for r in doc.rows %}
+    {% if r.kind == "section" %}
+      <tr class="table-secondary"><td colspan="6"><b>{{ r.name }}</b></td></tr>
+    {% elif r.kind == "note" %}
+      <tr><td colspan="6"><i>{{ r.name|linebreaksbr }}</i></td></tr>
+    {% elif r.kind == "subtotal" %}
+      <tr class="table-light"><td colspan="3" class="text-end"><b>Sous-total</b></td><td>Taxes {{ r.tax|money }}</td><td class="text-end"><b>{{ r.ht|money }}</b></td><td class="text-end"><b>{{ r.ttc|money }}</b></td></tr>
+    {% else %}
+      <tr><td>{{ r.name }}</td><td class="text-end">{{ r.quantity|floatformat:"-3" }}</td><td class="text-end">{{ r.unit_ht|money }}</td>
+          <td class="small">{{ r.tax_label }}</td><td class="text-end">{{ r.ht|money }}</td><td class="text-end">{{ r.ttc|money }}</td></tr>
+    {% endif %}
+  {% empty %}
+    <tr><td colspan="6" class="text-muted text-center py-3">Aucune ligne.</td></tr>
   {% endfor %}
   </tbody>
 </table></div>
+<div class="card-footer bg-white">
+  <div class="d-flex flex-column align-items-end">
+    <div>Total HT : <b>{{ doc.totals.total_ht|money }}</b> · Taxes : <b>{{ doc.totals.total_tax|money }}</b> · Total TTC : <b>{{ doc.totals.total_ttc|money }}</b> {{ doc.currency }}</div>
+    {% if doc.aib_label %}<div>{{ doc.aib_label }} : <b>{{ doc.totals.aib_amount|money }}</b> {{ doc.currency }}{% if not doc.aib_added %} <span class="text-muted small">(à part)</span>{% endif %}</div>{% endif %}
+    <div class="fs-5">Total à payer : <b>{{ doc.totals.total_payable|money }} {{ doc.currency }}</b></div>
+  </div>
+</div></div>
 
-<div class="card mt-3"><div class="card-header">Paiements</div>
+<div class="card mt-3"><div class="card-header">Paiements déclarés à la DGI</div>
 <ul class="list-group list-group-flush">
-  {% for p in invoice.payments.all %}<li class="list-group-item">{{ p.get_method_display }} : {{ p.amount|money }}</li>{% endfor %}
+  {% for p in invoice.payments.all %}<li class="list-group-item">{{ p.get_method_display }} : {{ p.amount|money }}</li>
+  {% empty %}<li class="list-group-item text-muted">Aucun.</li>{% endfor %}
 </ul></div>
 
 {% if invoice.security %}

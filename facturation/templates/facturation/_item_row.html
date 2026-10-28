@@ -1,10 +1,37 @@
-<tr>
-  <td>{{ form.name }}{% for e in form.name.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</td>
-  <td style="width:160px">{{ form.price }}{% for e in form.price.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</td>
-  <td style="width:110px">{{ form.quantity }}{% for e in form.quantity.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</td>
-  <td style="width:130px">{{ form.tax_group }}</td>
-  <td style="width:50px" class="text-end">
-    <span class="d-none">{{ form.DELETE }}</span>
-    <button type="button" class="btn btn-sm btn-outline-danger remove-row">✕</button>
+{% comment %}Ligne de l'éditeur : article (item), section ou note selon `kind` (ou la valeur du formulaire).{% endcomment %}
+{% with k=kind|default:form.kind.value|default:"item" %}
+<tr class="line-row row-{{ k }}" data-kind="{{ k }}">
+  <td class="text-nowrap" style="width:72px">
+    <input type="hidden" name="{{ form.kind.html_name }}" value="{{ k }}">
+    {{ form.ORDER }}<span class="d-none">{{ form.DELETE }}</span>
+    <button type="button" class="btn btn-sm btn-light btn-up" title="Monter">↑</button>
+    <button type="button" class="btn btn-sm btn-light btn-down" title="Descendre">↓</button>
   </td>
+  {% if k == "section" %}
+  <td colspan="4">
+    <input type="text" class="form-control fw-bold" name="{{ form.name.html_name }}" id="{{ form.name.id_for_label }}"
+           value="{{ form.name.value|default_if_none:'' }}" placeholder="Titre de la section (ex. A — PORTAGE SALARIAL)">
+    {% for e in form.name.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+  </td>
+  <td class="text-end small fw-bold sec-subtotal" style="color:#1f4e8c"></td>
+  <td class="text-end text-nowrap">
+    <button type="button" class="btn btn-sm btn-outline-secondary btn-untitle" title="Supprimer le titre et garder ses lignes">Retirer le titre</button>
+    <button type="button" class="btn btn-sm btn-outline-danger btn-del" title="Supprimer la section et ses lignes">✕</button>
+  </td>
+  {% elif k == "note" %}
+  <td colspan="5">
+    <textarea class="form-control fst-italic" rows="2" name="{{ form.name.html_name }}" id="{{ form.name.id_for_label }}"
+              placeholder="Note (affichée en italique, sans effet sur les calculs)">{{ form.name.value|default_if_none:'' }}</textarea>
+    {% for e in form.name.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+  </td>
+  <td class="text-end"><button type="button" class="btn btn-sm btn-outline-danger btn-del" title="Supprimer la note">✕</button></td>
+  {% else %}
+  <td>{{ form.name }}{% for e in form.name.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</td>
+  <td style="width:110px">{{ form.quantity }}{% for e in form.quantity.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</td>
+  <td style="width:150px">{{ form.unit_ht }}{% for e in form.unit_ht.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</td>
+  <td style="width:200px">{{ form.tax_group }}<div class="small text-warning tax-warn d-none">Règle fiscale à valider</div></td>
+  <td class="text-end fw-bold ttc" style="width:130px"></td>
+  <td class="text-end"><button type="button" class="btn btn-sm btn-outline-danger btn-del" title="Supprimer la ligne">✕</button></td>
+  {% endif %}
 </tr>
+{% endwith %}

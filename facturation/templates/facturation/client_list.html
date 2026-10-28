@@ -7,7 +7,7 @@
 </div>
 <form class="mb-3" method="get">
   <div class="input-group">
-    <input class="form-control" name="q" value="{{ q }}" placeholder="Rechercher par raison sociale, IFU ou contact…">
+    <input class="form-control" name="q" value="{{ q }}" placeholder="Rechercher par raison sociale, code, IFU ou contact…">
     <button class="btn btn-outline-secondary">Rechercher</button>
   </div>
 </form>
@@ -17,10 +17,11 @@
   <div class="col-md-6 col-lg-4">
     <div class="card h-100 shadow-sm">
       <div class="card-body">
-        <h2 class="h5 card-title">{{ c.name }}</h2>
+        <h2 class="h5 card-title">{{ c.name }}{% if c.code %} <span class="badge bg-light text-dark border">{{ c.code }}</span>{% endif %}</h2>
         <p class="mb-1"><b>IFU :</b> {{ c.ifu|default:"—" }}</p>
         <p class="mb-1"><b>Contact :</b> {{ c.contact|default:"—" }}</p>
-        <p class="mb-2"><b>Adresse :</b> {{ c.address|default:"—"|linebreaksbr }}</p>
+        <p class="mb-1"><b>Adresse :</b> {{ c.address|default:"—"|linebreaksbr }}</p>
+        <p class="mb-2"><b>Expédition :</b> {{ c.shipping_address|default:"—"|linebreaksbr }}</p>
         <span class="badge bg-light text-dark border">{{ c.nb_invoices }} facture{{ c.nb_invoices|pluralize }}</span>
       </div>
       <div class="card-footer bg-white d-flex flex-wrap gap-2">

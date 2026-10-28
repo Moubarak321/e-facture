@@ -2,113 +2,167 @@
 <html lang="fr">
 <head>
 <meta charset="utf-8">
-<title>{{ invoice.get_type_display }} {{ invoice.number|default:invoice.uid }}</title>
+<title>{{ doc.title }} {{ doc.number }}</title>
 <style>
-  :root { --accent: {{ company.accent_color }}; }
+  :root { --accent: {{ doc.company.accent_color }}; --label: {{ doc.company.secondary_color }}; --section-bg: #dcdde0; --section-text: #755a7a; --stripe: #f6f5f5; --text: #4a4a4a; }
   * { box-sizing: border-box; }
-  body { font-family: Arial, Helvetica, sans-serif; font-size: 13px; color: #222; margin: 0; background: #eee; }
-  .page { width: 210mm; min-height: 297mm; margin: 10px auto; padding: 15mm; background: #fff; position: relative; }
-  header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 3px solid var(--accent); padding-bottom: 10px; }
-  header img { max-height: 80px; max-width: 220px; }
-  .company { text-align: right; line-height: 1.5; }
-  .company h1 { margin: 0 0 4px; font-size: 18px; color: var(--accent); }
-  h2 { color: var(--accent); margin: 18px 0 4px; font-size: 20px; text-transform: uppercase; }
-  .meta { display: flex; justify-content: space-between; gap: 20px; margin: 12px 0; }
-  .box { border: 1px solid #ccc; padding: 8px 10px; flex: 1; line-height: 1.5; }
-  table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-  th { background: var(--accent); color: #fff; text-align: left; padding: 6px; }
-  td { padding: 6px; border-bottom: 1px solid #ddd; }
-  .r { text-align: right; }
-  .after { display: flex; gap: 20px; align-items: flex-start; margin-top: 10px; }
-  .after .left { flex: 1; line-height: 1.6; }
-  .after .left p { margin: 0 0 8px; }
-  .totals { flex: 0 0 55%; margin-top: 0; }
-  .totals td { border: none; padding: 3px 6px; }
-  .grand td { font-weight: bold; font-size: 15px; border-top: 2px solid var(--accent); }
-  .security { margin-top: 20px; display: flex; gap: 16px; align-items: center; border: 2px solid var(--accent); padding: 10px; }
+  body { font-family: "Lato", "Helvetica Neue", Arial, sans-serif; font-size: 13px; color: var(--text); margin: 0; background: #e9e9e9; }
+  .sheet { width: 210mm; margin: 10px auto; padding: 12mm 14mm; background: #fff; position: relative; }
+  table.layout { width: 100%; border-collapse: collapse; }
+  table.layout > thead { display: table-header-group; }
+  table.layout > tfoot { display: table-footer-group; }
+  table.layout > thead > tr > td, table.layout > tbody > tr > td, table.layout > tfoot > tr > td { padding: 0; }
+  .head { display: flex; gap: 16px; align-items: center; padding-bottom: 12px; border-bottom: 1px solid #e3e3e3; }
+  .head img { max-height: 84px; max-width: 200px; }
+  .head .co { font-weight: 700; line-height: 1.45; }
+  .foot { border-top: 1px solid #333; margin-top: 14px; padding-top: 8px; text-align: center; font-weight: 700; line-height: 1.6; font-size: 12px; }
+  .foot .bank-title { color: var(--label); margin-top: 6px; }
+  .foot .pre { white-space: pre-line; }
+  .addr { display: flex; justify-content: space-between; gap: 30px; margin: 22px 0 6px; line-height: 1.5; font-weight: 700; }
+  .addr > div { flex: 1; }
+  .addr .lbl { color: var(--label); }
+  h1.title { color: var(--accent); font-size: 27px; margin: 26px 0 14px; font-weight: 700; }
+  .dates { display: flex; gap: 40px; padding-bottom: 8px; border-bottom: 1px solid #ddd; }
+  .dates > div { flex: 1; font-weight: 700; }
+  .dates .lbl { color: var(--label); display: block; margin-bottom: 4px; }
+  table.items { width: 100%; border-collapse: collapse; margin-top: 4px; }
+  table.items thead { display: table-header-group; }
+  table.items th { color: var(--label); text-align: right; padding: 8px 6px; font-weight: 700; border-bottom: 1px solid #ddd; }
+  table.items th:first-child { text-align: left; }
+  table.items td { padding: 8px 6px; vertical-align: top; font-weight: 600; }
+  table.items tr { page-break-inside: avoid; }
+  table.items td.r { text-align: right; white-space: nowrap; }
+  table.items tr.line:nth-of-type(even) td { background: var(--stripe); }
+  table.items tr.sec td { background: var(--section-bg); color: var(--section-text); font-weight: 700; padding: 9px 6px; }
+  table.items tr.note td { font-style: italic; color: #666; font-weight: 400; }
+  table.items tr.subtotal td { font-weight: 700; color: var(--label); background: var(--stripe); }
+  .small { font-size: 11px; font-weight: 400; color: #777; display: block; }
+  .after { display: flex; gap: 28px; align-items: flex-start; margin-top: 14px; page-break-inside: avoid; }
+  .after .left { flex: 1; line-height: 1.6; font-weight: 700; }
+  .after .left .legal { margin-top: 12px; color: #777; text-align: justify; font-weight: 700; white-space: pre-line; }
+  .after .left .note { margin-top: 10px; font-style: italic; font-weight: 400; }
+  table.totals { flex: 0 0 54%; border-collapse: collapse; }
+  table.totals td { padding: 6px 6px; font-weight: 700; border-top: 1px solid #e3e3e3; }
+  table.totals td.r { text-align: right; white-space: nowrap; }
+  table.totals tr.grand td { font-size: 14px; color: #111; border-top: 2px solid var(--accent); }
+  table.totals tr.muted td { font-weight: 600; color: #777; font-size: 12px; }
+  .words { text-align: right; font-size: 11px; font-weight: 700; color: #666; margin-top: 8px; }
+  .words b { display: block; font-size: 10.5px; }
+  .security { margin-top: 18px; display: flex; gap: 16px; align-items: center; border: 2px solid var(--accent); padding: 10px; page-break-inside: avoid; }
   .security img { width: 110px; height: 110px; }
-  .warn { background: #fff3cd; border: 2px solid #e0a800; padding: 8px; text-align: center; font-weight: bold; margin: 10px 0; }
-  .cancelled { background: #f8d7da; border-color: #c82333; }
-  footer { margin-top: 20px; font-size: 11px; color: #555; border-top: 1px solid #ccc; padding-top: 8px; white-space: pre-line; }
+  .banner { padding: 8px; text-align: center; font-weight: 700; margin: 12px 0 0; border: 2px solid #e0a800; background: #fff3cd; color: #6b5200; }
+  .banner.cancelled { background: #f8d7da; border-color: #c82333; color: #721c24; }
+  .wm { position: fixed; top: 38%; left: 0; right: 0; text-align: center; font-size: 120px; font-weight: 900; color: rgba(200, 0, 0, .07); transform: rotate(-28deg); pointer-events: none; z-index: 5; letter-spacing: 10px; }
   .toolbar { text-align: center; padding: 10px; }
-  @media print { body { background: #fff; } .page { margin: 0; box-shadow: none; } .toolbar { display: none; } }
+  @page { size: A4; margin: 10mm 0; @bottom-center { content: "Page : " counter(page) " sur " counter(pages); font-size: 10px; color: #777; } }
+  @media print { body { background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; } .sheet { margin: 0; width: auto; padding: 0 14mm; } .toolbar { display: none; } }
 </style>
 </head>
 <body>
-<div class="toolbar"><button onclick="window.print()">Imprimer / Enregistrer en PDF</button></div>
-<div class="page">
-  <header>
-    <div>{% if company.logo %}<img src="{{ company.logo.url }}" alt="{{ company.name }}">{% endif %}</div>
-    <div class="company">
-      <h1>{{ company.name }}</h1>
-      {% if company.address %}{{ company.address|linebreaksbr }}<br>{% endif %}
-      {% if company.phone %}Tél : {{ company.phone }}<br>{% endif %}
-      {% if company.email %}{{ company.email }}<br>{% endif %}
-      {% if company.website %}{{ company.website }}<br>{% endif %}
-      {% if company.ifu %}IFU : {{ company.ifu }}{% endif %}{% if company.rccm %} · RCCM : {{ company.rccm }}{% endif %}
+<div class="toolbar"><button onclick="window.print()">Imprimer / Enregistrer en PDF</button>
+  {% if doc.proforma %}<button onclick="window.close()">Fermer</button>{% endif %}</div>
+{% if doc.proforma %}<div class="wm">PROFORMA</div>{% endif %}
+<div class="sheet">
+<table class="layout">
+<thead><tr><td>
+  <div class="head">
+    {% if doc.company.logo %}<img src="{{ doc.company.logo.url }}" alt="{{ doc.company.name }}">{% endif %}
+    <div class="co">
+      {{ doc.company.name }}<br>
+      {% if doc.company.rccm %}RCCM {{ doc.company.rccm }}<br>{% endif %}
+      {% if doc.company.address %}{{ doc.company.address|linebreaksbr }}<br>{% endif %}
+      {% if doc.company.ifu %}IFU : {{ doc.company.ifu }}{% endif %}
     </div>
-  </header>
+  </div>
+</td></tr></thead>
 
-  <h2>{% if invoice.internal_number %}{% if invoice.is_credit_note %}Avoir{% else %}Facture{% endif %} N° : {{ invoice.internal_number }}{% else %}{{ invoice.get_type_display }}{% endif %}</h2>
+<tbody><tr><td>
+  {% if doc.banner %}<div class="banner {{ doc.banner_class }}">{{ doc.banner }}</div>{% endif %}
 
-  {% if invoice.status == 'pending' %}
-    <div class="warn">FACTURE NON CONFIRMÉE : document sans valeur fiscale tant qu'elle n'est pas confirmée auprès de la DGI.</div>
-  {% elif invoice.status == 'cancelled' %}
-    <div class="warn cancelled">FACTURE ANNULÉE</div>
-  {% endif %}
-
-  <div class="meta">
-    <div class="box"><b>Date :</b> {{ invoice.created_at|date:"d/m/Y" }}<br>
-      {% if invoice.reference %}<b>Avoir sur facture (UID) :</b> {{ invoice.reference }}<br>{% endif %}
-      <b>UID :</b> {{ invoice.uid }}</div>
-    <div class="box"><b>Client</b><br>
-      {{ invoice.client_name|default:"—" }}<br>
-      {% if invoice.client_ifu %}IFU : {{ invoice.client_ifu }}<br>{% endif %}
-      {% if invoice.client_contact %}{{ invoice.client_contact }}<br>{% endif %}
-      {{ invoice.client_address|linebreaksbr }}</div>
+  <div class="addr">
+    <div>
+      {% if doc.shipping_address %}<span class="lbl">Adresse d'expédition :</span><br>{{ doc.shipping_address|linebreaksbr }}{% endif %}
+    </div>
+    <div>
+      {% if doc.client.name %}{{ doc.client.name }}<br>{% endif %}
+      {% if doc.client.address %}{{ doc.client.address|linebreaksbr }}<br>{% endif %}
+      {% if doc.client.ifu %}IFU : {{ doc.client.ifu }}<br>{% endif %}
+      {% if doc.client.contact %}{{ doc.client.contact }}{% endif %}
+    </div>
   </div>
 
-  <table>
-    <thead><tr><th>Désignation</th><th class="r">Prix unit. TTC</th><th class="r">Qté</th><th>Taxe</th><th class="r">Total TTC</th></tr></thead>
+  <h1 class="title">{{ doc.title }}{% if doc.number %} {{ doc.number }}{% endif %}</h1>
+
+  <div class="dates">
+    <div><span class="lbl">Date de la facture :</span>{{ doc.invoice_date|date:"d/m/Y" }}</div>
+    <div>{% if doc.due_date %}<span class="lbl">Date d'échéance :</span>{{ doc.due_date|date:"d/m/Y" }}{% endif %}</div>
+  </div>
+
+  <table class="items">
+    <thead><tr>
+      <th>Description</th><th>Quantité</th><th>Prix unitaire HT</th><th>Taxes</th><th>Montant HT</th><th>Montant TTC</th>
+    </tr></thead>
     <tbody>
-    {% for it in invoice.items.all %}
-      <tr><td>{{ it.name }}</td><td class="r">{{ it.price|money }}</td><td class="r">{{ it.quantity|floatformat:"-3" }}</td>
-          <td>{{ it.tax_group }}</td><td class="r">{{ it.line_total|money }}</td></tr>
+    {% for r in doc.rows %}
+      {% if r.kind == "section" %}
+        <tr class="sec"><td colspan="6">{{ r.name }}</td></tr>
+      {% elif r.kind == "note" %}
+        <tr class="note"><td colspan="6">{{ r.name|linebreaksbr }}</td></tr>
+      {% elif r.kind == "subtotal" %}
+        <tr class="subtotal"><td colspan="3" class="r">Sous-total</td><td class="r">Taxes {{ r.tax|money }}</td><td class="r">{{ r.ht|money }}</td><td class="r">{{ r.ttc|money }}</td></tr>
+      {% else %}
+        <tr class="line"><td>{{ r.name }}</td><td class="r">{{ r.quantity|floatformat:"-3" }}</td><td class="r">{{ r.unit_ht|money }}</td>
+          <td class="r"><span class="small">{{ r.tax_label }}</span></td><td class="r">{{ r.ht|money }}</td><td class="r">{{ r.ttc|money }}</td></tr>
+      {% endif %}
     {% endfor %}
     </tbody>
   </table>
 
   <div class="after">
-  <div class="left">
-    {% if invoice.payment_communication %}<p><b>Communication de paiement :</b> {{ invoice.payment_communication }}</p>{% endif %}
-    {% if invoice.note %}<p><b>Note :</b> {{ invoice.note|linebreaksbr }}</p>{% endif %}
-  </div>
-  <table class="totals">
-    {% for g in tax_summary %}
-      <tr><td>Groupe {{ g.group }} ({{ g.rate }} %) : HT {{ g.ht|money }}</td><td class="r">TVA {{ g.tax|money }}</td></tr>
-    {% endfor %}
-    <tr class="grand"><td>TOTAL TTC (FCFA)</td><td class="r">{{ invoice.total|money }}</td></tr>
-    {% for p in invoice.payments.all %}
-      <tr><td>{{ p.get_method_display }}</td><td class="r">{{ p.amount|money }}</td></tr>
-    {% endfor %}
-  </table>
+    <div class="left">
+      {% if doc.communication %}<div>Communication de paiement : {{ doc.communication }}</div>{% endif %}
+      {% if doc.note %}<div class="note">Note : {{ doc.note|linebreaksbr }}</div>{% endif %}
+      {% if doc.company.footer_text %}<div class="legal">{{ doc.company.footer_text }}</div>{% endif %}
+    </div>
+    <div style="flex: 0 0 54%">
+      <table class="totals" style="width:100%">
+        <tr><td>Montant hors taxes</td><td class="r">{{ doc.totals.total_ht|money }} {{ doc.currency }}</td></tr>
+        {% for g in doc.tax_summary %}
+        <tr class="muted"><td>{{ g.label }} : T.V.A. {{ g.rate|floatformat:"-2" }} % sur {{ g.ht|money }}</td><td class="r">{{ g.tax|money }} {{ doc.currency }}</td></tr>
+        {% endfor %}
+        <tr><td>Total TTC</td><td class="r">{{ doc.totals.total_ttc|money }} {{ doc.currency }}</td></tr>
+        {% if doc.aib_label %}
+        <tr><td>{{ doc.aib_label }} sur base HT{% if not doc.aib_added %} <span class="small">(à part, non inclus dans le total)</span>{% endif %}</td><td class="r">{{ doc.totals.aib_amount|money }} {{ doc.currency }}</td></tr>
+        <tr class="grand"><td>Total à payer</td><td class="r">{{ doc.totals.total_payable|money }} {{ doc.currency }}</td></tr>
+        {% else %}
+        <tr class="grand"><td>Total</td><td class="r">{{ doc.totals.total_payable|money }} {{ doc.currency }}</td></tr>
+        {% endif %}
+      </table>
+      <div class="words">Montant total en toutes lettres :<b>{{ doc.words }}</b></div>
+    </div>
   </div>
 
-  {% if invoice.security %}
+  {% if doc.security %}
   <div class="security">
     {% if qr %}<img src="{{ qr }}" alt="QR code">{% endif %}
     <div>
       <b>Éléments de sécurité (DGI)</b><br>
-      Code MECeF/DGI : {{ invoice.number }}<br>
-      NIM : {{ invoice.nim }}<br>
-      Compteurs : {{ invoice.counters }}<br>
-      Date/heure : {{ invoice.security_date }}
+      Code MECeF/DGI : {{ doc.security.code }}<br>
+      NIM : {{ doc.security.nim }}<br>
+      {% if doc.security.counters %}Compteurs : {{ doc.security.counters }}<br>{% endif %}
+      Date/heure : {{ doc.security.date }}
     </div>
   </div>
   {% endif %}
+</td></tr></tbody>
 
-  {% if company.bank_details %}<footer><b>Coordonnées bancaires</b><br>{{ company.bank_details }}</footer>{% endif %}
-  {% if company.footer_text %}<footer>{{ company.footer_text }}</footer>{% endif %}
+<tfoot><tr><td>
+  <div class="foot">
+    <div>{% if doc.company.rccm %}RCCM {{ doc.company.rccm }}{% endif %}{% if doc.company.phone %} / {{ doc.company.phone }}{% endif %} {{ doc.company.email }} {{ doc.company.website }}</div>
+    {% if doc.company.bank_details %}<div class="bank-title">Coordonnées bancaires</div><div class="pre">{{ doc.company.bank_details }}</div>{% endif %}
+  </div>
+</td></tr></tfoot>
+</table>
 </div>
 </body>
 </html>

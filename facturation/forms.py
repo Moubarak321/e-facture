@@ -1,8 +1,8 @@
 from decimal import Decimal
 
 from django import forms
-from django.core.validators import RegexValidator
-from django.forms import formset_factory
+from django.forms import BaseFormSet, formset_factory
+from django.utils import timezone
 
 from .models import PAYMENT_METHODS, TAX_GROUPS, Client, CompanySettings, Invoice
 
@@ -33,7 +33,7 @@ class CompanyForm(BootstrapMixin, forms.ModelForm):
         model = CompanySettings
         fields = [
             "name", "logo", "ifu", "rccm", "address", "phone", "email", "website",
-            "bank_details", "footer_text", "accent_color", "operator_name",
+            "bank_details", "footer_text", "accent_color", "secondary_color", "operator_name",
             "invoice_prefix", "credit_prefix", "emcf_env", "emcf_token",
         ]
         widgets = {
@@ -41,6 +41,7 @@ class CompanyForm(BootstrapMixin, forms.ModelForm):
             "bank_details": forms.Textarea(attrs={"rows": 3}),
             "footer_text": forms.Textarea(attrs={"rows": 3}),
             "accent_color": forms.TextInput(attrs={"type": "color"}),
+            "secondary_color": forms.TextInput(attrs={"type": "color"}),
             "emcf_token": forms.PasswordInput(render_value=False),
         }
 
@@ -80,11 +81,20 @@ class CompanyForm(BootstrapMixin, forms.ModelForm):
 class ClientForm(BootstrapMixin, forms.ModelForm):
     class Meta:
         model = Client
-        fields = ["name", "ifu", "contact", "address"]
-        widgets = {"address": forms.Textarea(attrs={"rows": 3})}
+        fields = ["name", "code", "ifu", "contact", "address", "shipping_address"]
+        widgets = {
+            "address": forms.Textarea(attrs={"rows": 3}),
+            "shipping_address": forms.Textarea(attrs={"rows": 3}),
+        }
 
     def clean_ifu(self):
         return _validate_ifu(self.cleaned_data["ifu"])
+
+    def clean_code(self):
+        code = self.cleaned_data["code"].strip()
+        if code and Client.objects.filter(code__iexact=code).exclude(pk=self.instance.pk).exists():
+            raise forms.ValidationError("Ce code client est déjà utilisé par un autre client.")
+        return code
 
 
 # --------------------------------------------------------------------------- facture
@@ -110,6 +120,17 @@ class InvoiceForm(BootstrapMixin, forms.Form):
         required=False,
         empty_label="— Aucun client (client de passage) —",
     )
+    shipping_address = forms.CharField(
+        label="Adresse d'expédition", required=False, widget=forms.Textarea(attrs={"rows": 2}),
+        help_text="Reprise de la fiche client ; modifiable pour cette facture.",
+    )
+    invoice_date = forms.DateField(
+        label="Date de la facture", widget=forms.DateInput(attrs={"type": "date"}, format="%Y-%m-%d"),
+    )
+    due_date = forms.DateField(
+        label="Date d'échéance", required=False,
+        widget=forms.DateInput(attrs={"type": "date"}, format="%Y-%m-%d"),
+    )
     type = forms.ChoiceField(label="Type de facture", choices=Invoice.TYPES, initial="FV")
     reference = forms.CharField(
         label="UID de la facture d'origine (obligatoire pour un avoir)",
@@ -117,6 +138,10 @@ class InvoiceForm(BootstrapMixin, forms.Form):
         max_length=64,
     )
     aib = forms.ChoiceField(label="AIB", choices=Invoice.AIB_CHOICES, required=False)
+    payment_status = forms.ChoiceField(
+        label="Statut de paiement", choices=Invoice.PaymentStatus.choices,
+        initial=Invoice.PaymentStatus.UNPAID,
+    )
     internal_number = forms.CharField(
         label="N° de facture", required=False, max_length=50,
         help_text="Proposé automatiquement (FAC/2025/00001) ; vous pouvez le modifier.",
@@ -128,9 +153,12 @@ class InvoiceForm(BootstrapMixin, forms.Form):
     note = forms.CharField(
         label="Note", required=False, widget=forms.Textarea(attrs={"rows": 2})
     )
-    confirm_now = forms.BooleanField(
-        label="Confirmer (finaliser) immédiatement après l'envoi", required=False
-    )
+
+    def __init__(self, *args, invoice_pk=None, **kwargs):
+        self.invoice_pk = invoice_pk  # facture (brouillon) en cours d'édition, exclue des contrôles d'unicité
+        super().__init__(*args, **kwargs)
+        if not self.is_bound and not self.initial.get("invoice_date"):
+            self.initial["invoice_date"] = timezone.localdate()
 
     def clean(self):
         cleaned = super().clean()
@@ -140,18 +168,55 @@ class InvoiceForm(BootstrapMixin, forms.Form):
         company = cleaned.get("company")
         if number and company and Invoice.objects.filter(
             company=company, internal_number=number
-        ).exists():
+        ).exclude(pk=self.invoice_pk).exists():
             self.add_error("internal_number", f"Le n° {number} existe déjà pour cette société.")
+        invoice_date, due_date = cleaned.get("invoice_date"), cleaned.get("due_date")
+        if invoice_date and due_date and due_date < invoice_date:
+            self.add_error("due_date", "L'échéance ne peut pas précéder la date de la facture.")
         return cleaned
 
 
 class ItemForm(BootstrapMixin, forms.Form):
-    name = forms.CharField(label="Désignation", max_length=200)
-    price = forms.DecimalField(label="Prix unitaire TTC", min_value=0, decimal_places=2, max_digits=16)
+    """Une ligne de l'éditeur : article (item), titre de section (section) ou note (note)."""
+
+    KINDS = [("item", "Ligne"), ("section", "Section"), ("note", "Note")]
+
+    kind = forms.ChoiceField(choices=KINDS, widget=forms.HiddenInput, initial="item")
+    name = forms.CharField(label="Désignation", required=False, max_length=1000)
     quantity = forms.DecimalField(
-        label="Quantité", min_value=Decimal("0.001"), decimal_places=3, max_digits=12, initial=1
+        label="Quantité", required=False, min_value=Decimal("0.001"), decimal_places=3, max_digits=12,
+        initial=1,
     )
-    tax_group = forms.ChoiceField(label="Taxe", choices=TAX_GROUPS, initial="B")
+    unit_ht = forms.DecimalField(
+        label="Prix HT", required=False, min_value=Decimal(0), decimal_places=2, max_digits=16,
+    )
+    tax_group = forms.ChoiceField(label="Taxe", choices=TAX_GROUPS, required=False, initial="B")
+
+    def clean(self):
+        cleaned = super().clean()
+        kind, name = cleaned.get("kind"), (cleaned.get("name") or "").strip()
+        cleaned["name"] = name
+        if kind == "item":
+            if not name:
+                self.add_error("name", "Désignation requise.")
+            elif len(name) > 200:
+                self.add_error("name", "200 caractères maximum pour une ligne d'article.")
+            if cleaned.get("quantity") is None:
+                self.add_error("quantity", "Quantité requise.")
+            if cleaned.get("unit_ht") is None:
+                self.add_error("unit_ht", "Prix HT requis.")
+            if not cleaned.get("tax_group"):
+                self.add_error("tax_group", "Taxe requise.")
+        elif kind in ("section", "note") and not name:
+            self.add_error("name", "Texte requis (remplissez ou supprimez cette ligne).")
+        return cleaned
+
+
+class BaseItemFormSet(BaseFormSet):
+    def add_fields(self, form, index):
+        super().add_fields(form, index)
+        if "ORDER" in form.fields:  # position gérée par le JavaScript (glisser / monter / descendre)
+            form.fields["ORDER"].widget = forms.HiddenInput()
 
 
 class PaymentForm(BootstrapMixin, forms.Form):
@@ -161,7 +226,9 @@ class PaymentForm(BootstrapMixin, forms.Form):
     )
 
 
-ItemFormSet = formset_factory(ItemForm, extra=0, min_num=1, validate_min=True, can_delete=True)
+ItemFormSet = formset_factory(
+    ItemForm, formset=BaseItemFormSet, extra=0, can_delete=True, can_order=True
+)
 PaymentFormSet = formset_factory(PaymentForm, extra=1, can_delete=True)
 
 
