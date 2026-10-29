@@ -7,8 +7,9 @@ Règles (identiques côté navigateur et côté serveur ; le serveur fait foi) :
 * Montant HT ligne   = arrondi_0,01( quantité × prix unitaire HT )
 * Taxe ligne         = TTC ligne − HT ligne
 * Totaux de facture  = sommes des lignes, arrondies au franc (1 FCFA), HT + taxes = TTC
-* AIB                = arrondi_1( total HT × taux AIB / 100 ), affiché à part ; il n'est ajouté
-                       au total à payer que si `aib_added` est vrai (règle métier à valider).
+* AIB                = arrondi_1( total HT × taux AIB / 100 ). Information destinée au client,
+                       JAMAIS transmise à la DGI : le total TTC reste celui de la facture normalisée.
+* Total à payer      = total TTC − AIB (montant net réellement dû par le client).
 
 Arrondi : demi supérieur (ROUND_HALF_UP). Les lignes de type « section » et « note » ne
 participent à aucun calcul ; les sections reçoivent un sous-total (lignes qui les suivent
@@ -54,7 +55,7 @@ def compute_line(quantity, rate, unit_ht=None, unit_ttc=None):
             "rate": rate}
 
 
-def compute_document(rows, tax_rates, aib_rate=0, aib_added=False, tax_labels=None):
+def compute_document(rows, tax_rates, aib_rate=0, tax_labels=None):
     """rows : liste de dicts {kind: item|section|note, name, quantity, unit_ht | unit_ttc, tax_group}.
 
     Retourne les lignes enrichies (avec sous-totaux), le récapitulatif par groupe de taxe et les
@@ -114,6 +115,6 @@ def compute_document(rows, tax_rates, aib_rate=0, aib_added=False, tax_labels=No
         "total_ttc": total_ttc,
         "aib_rate": aib_rate,
         "aib_amount": aib_amount,
-        "total_payable": total_ttc + (aib_amount if aib_added else D0),
+        "total_payable": total_ttc - aib_amount,
         "item_count": sum(1 for r in out if r["kind"] == "item"),
     }

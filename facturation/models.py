@@ -167,11 +167,16 @@ class Invoice(models.Model):
     client_contact = models.CharField(max_length=100, blank=True)
     client_address = models.TextField(blank=True)
 
-    # Montants calculés côté serveur (source de vérité). `total` = total à payer.
+    # Montants calculés côté serveur (source de vérité). `total` = total TTC de la facture normalisée
+    # (celui que connaît la DGI) ; le net à payer (TTC − AIB) est `net_payable`.
     total_ht = models.DecimalField(max_digits=16, decimal_places=2, default=0)
     total_tax = models.DecimalField(max_digits=16, decimal_places=2, default=0)
     aib_amount = models.DecimalField(max_digits=16, decimal_places=2, default=0)
     total = models.DecimalField(max_digits=16, decimal_places=2, default=0)
+    amount_remaining = models.DecimalField(
+        "Reste à payer", max_digits=16, decimal_places=2, null=True, blank=True,
+        help_text="Montant saisi par l'émetteur, affiché après les totaux s'il est renseigné.",
+    )
 
     request_payload = models.JSONField(default=dict, blank=True)
     create_response = models.JSONField(default=dict, blank=True)
@@ -237,6 +242,11 @@ class Invoice(models.Model):
         return self.type in ("FA", "EA")
 
     @property
+    def net_payable(self):
+        """Total à payer = total TTC − AIB (l'AIB n'est jamais transmis à la DGI)."""
+        return self.total - self.aib_amount
+
+    @property
     def is_draft(self):
         return self.status == self.Status.DRAFT
 
@@ -272,15 +282,14 @@ class Invoice(models.Model):
         """Résultat complet des calculs de cette facture (recalculé depuis ses lignes)."""
         return calc.compute_document(
             self.rows_for_calc(), conf.tax_rates(),
-            aib_rate=conf.aib_rate(self.aib), aib_added=conf.AIB_ADDED_TO_TOTAL,
-            tax_labels=dict(TAX_GROUPS),
+            aib_rate=conf.aib_rate(self.aib), tax_labels=dict(TAX_GROUPS),
         )
 
     def recompute_totals(self, save=True):
         """Met à jour les montants enregistrés à partir des lignes (le serveur fait foi)."""
         result = self.compute()
         self.total_ht, self.total_tax = result["total_ht"], result["total_tax"]
-        self.aib_amount, self.total = result["aib_amount"], result["total_payable"]
+        self.aib_amount, self.total = result["aib_amount"], result["total_ttc"]
         if save:
             self.save(update_fields=["total_ht", "total_tax", "aib_amount", "total"])
         return result

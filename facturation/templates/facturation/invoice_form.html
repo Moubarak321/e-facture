@@ -13,6 +13,7 @@
     <div class="col-md-6">{% with field=form.company %}{% include "facturation/_field.html" %}{% endwith %}</div>
     <div class="col-md-6">
       {% with field=form.client %}{% include "facturation/_field.html" %}{% endwith %}
+      <div class="small mt-1 mb-1" id="ship-hint"></div>
       <a class="small" href="{% url 'client_create' %}?next={% url 'invoice_create' %}">+ Ajouter un nouveau client</a>
     </div>
     <div class="col-12 mt-2">{% with field=form.shipping_address %}{% include "facturation/_field.html" %}{% endwith %}</div>
@@ -60,7 +61,13 @@
           <div class="d-flex justify-content-between"><span>Total TTC</span><b id="rc-ttc">0</b></div>
           <div class="d-flex justify-content-between d-none" id="rc-aib-row"><span id="rc-aib-label">AIB</span><b id="rc-aib">0</b></div>
           <div class="d-flex justify-content-between border-top mt-1 pt-1 fs-6"><span>Total à payer</span><b id="rc-total">0</b></div>
-          <div class="text-muted mt-2">Estimation en direct : le serveur recalcule tous les montants à l'enregistrement.</div>
+          <div class="d-flex justify-content-between align-items-center border-top mt-2 pt-2">
+            <label for="id_amount_remaining" class="fw-bold fs-6 mb-0">Reste à payer</label>
+            <div style="width:170px">{{ form.amount_remaining }}</div>
+          </div>
+          {% for e in form.amount_remaining.errors %}<div class="text-danger small text-end">{{ e }}</div>{% endfor %}
+          <div class="text-muted text-end">Facultatif : affiché en gras après les totaux de la facture.</div>
+          <div class="text-muted mt-2">Estimation en direct : le serveur recalcule tous les montants à l'enregistrement. Total à payer = Total TTC − AIB ; l'AIB n'est jamais transmis à la DGI.</div>
         </div>
       </div></div>
     </div>
@@ -91,6 +98,7 @@
 {{ aib_rates|json_script:"aib-rates" }}
 {{ client_shipping|json_script:"client-shipping" }}
 {{ unverified_groups|json_script:"unverified-groups" }}
+<style>#id_amount_remaining { font-weight: 700; text-align: right; }</style>
 {% endblock %}
 
 {% block scripts %}
@@ -101,7 +109,6 @@
   const AIB = JSON.parse(document.getElementById('aib-rates').textContent);
   const SHIP = JSON.parse(document.getElementById('client-shipping').textContent);
   const UNVERIFIED = JSON.parse(document.getElementById('unverified-groups').textContent);
-  const AIB_ADDED = {{ aib_added|yesno:"true,false" }};
   const form = document.getElementById('invoice-form');
   const body = document.getElementById('lines-body');
   const totalForms = document.getElementById('id_items-TOTAL_FORMS');
@@ -166,11 +173,11 @@
     document.getElementById('rc-ht').textContent = fmtInt(ht);
     document.getElementById('rc-tax').textContent = fmtInt(tax);
     document.getElementById('rc-ttc').textContent = fmtInt(ttc);
-    document.getElementById('rc-total').textContent = fmtInt(ttc + (AIB_ADDED ? aib : 0n));
+    document.getElementById('rc-total').textContent = fmtInt(ttc - aib);          // total à payer = TTC − AIB
     document.getElementById('rc-aib-row').classList.toggle('d-none', !aibCode);
     document.getElementById('rc-aib-label').textContent =
-      'AIB ' + (aibCode ? (AIB[aibCode] + ' % sur HT' + (AIB_ADDED ? '' : ' (affiché à part)')) : '');
-    document.getElementById('rc-aib').textContent = fmtInt(aib);
+      'AIB ' + (aibCode ? (AIB[aibCode] + ' % sur HT (à déduire, non transmis à la DGI)') : '');
+    document.getElementById('rc-aib').textContent = '− ' + fmtInt(aib);
     const lines = Object.keys(groups).sort().map(g => {
       const gt = groups[g];
       return '<div>' + (TAXLBL[g] || g) + ' : HT ' + fmtCents(gt.ht) + ' · taxe ' + fmtCents(gt.ttc - gt.ht) + '</div>';
@@ -268,13 +275,34 @@
   // ---- adresse d'expédition reprise de la fiche client (modifiable) ----
   const clientSel = document.getElementById('id_client');
   const shipInput = document.getElementById('id_shipping_address');
-  let autoShip = shipInput.value;
-  clientSel.addEventListener('change', () => {
-    if (shipInput.value === '' || shipInput.value === autoShip) {
-      autoShip = SHIP[clientSel.value] || '';
-      shipInput.value = autoShip;
+  const shipHint = document.getElementById('ship-hint');
+  let lastClient = clientSel.value;
+  function showShipHint() {
+    shipHint.textContent = '';
+    if (!clientSel.value) return;
+    const addr = SHIP[clientSel.value];
+    if (addr) {
+      const b = document.createElement('b');
+      b.textContent = 'Adresse d\u2019expédition de la fiche client : ';
+      shipHint.append(b, document.createTextNode(addr));
+    } else {
+      shipHint.textContent = 'Aucune adresse d\u2019expédition dans la fiche de ce client : celle saisie ci-dessous y sera enregistrée.';
     }
+  }
+  clientSel.addEventListener('change', () => {
+    const addr = SHIP[clientSel.value] || '';
+    const typed = shipInput.value.trim(), previous = (SHIP[lastClient] || '').trim();
+    if (typed === '' || typed === previous) {
+      shipInput.value = addr;                                     // champ vide ou repris de l'ancien client
+    } else if (addr && addr.trim() !== typed &&
+               confirm('Remplacer l\u2019adresse d\u2019expédition saisie par celle de la fiche du client sélectionné ?')) {
+      shipInput.value = addr;
+    }
+    lastClient = clientSel.value;
+    showShipHint();
   });
+  if (!shipInput.value.trim() && clientSel.value && SHIP[clientSel.value]) shipInput.value = SHIP[clientSel.value];
+  showShipHint();
 
   // ---- soumission : ordre des lignes, confirmation explicite, anti double-clic ----
   form.addEventListener('submit', (e) => {

@@ -6,7 +6,8 @@
 <style>
   :root { --accent: {{ doc.company.accent_color }}; --label: {{ doc.company.secondary_color }}; --section-bg: #dcdde0; --section-text: #755a7a; --stripe: #f6f5f5; --text: #4a4a4a; }
   * { box-sizing: border-box; }
-  body { font-family: "Lato", "Helvetica Neue", Arial, sans-serif; font-size: 13px; color: var(--text); margin: 0; background: #e9e9e9; }
+  html, body, table, th, td, div, span, p, h1, h2, b, i, button { font-family: "Aptos", "Aptos Display", "Segoe UI", Calibri, Arial, sans-serif; }
+  body { font-size: 13px; color: var(--text); margin: 0; background: #e9e9e9; }
   .sheet { width: 210mm; margin: 10px auto; padding: 12mm 14mm; background: #fff; position: relative; }
   table.layout { width: 100%; border-collapse: collapse; }
   table.layout > thead { display: table-header-group; }
@@ -34,17 +35,18 @@
   table.items td.r { text-align: right; white-space: nowrap; }
   table.items tr.line:nth-of-type(even) td { background: var(--stripe); }
   table.items tr.sec td { background: var(--section-bg); color: var(--section-text); font-weight: 700; padding: 9px 6px; }
-  table.items tr.note td { font-style: italic; color: #666; font-weight: 400;  }
+  table.items tr.note td { font-style: italic; color: #666; font-weight: 400; }
   table.items tr.subtotal td { font-weight: 700; color: var(--label); background: var(--stripe); }
   .small { font-size: 11px; font-weight: 400; color: #777; display: block; }
   .after { display: flex; gap: 28px; align-items: flex-start; margin-top: 14px; page-break-inside: avoid; }
   .after .left { flex: 1; line-height: 1.6; font-weight: 400; }
   .after .left .legal { margin-top: 10px; color: #777; text-align: justify; font-weight: 700; white-space: pre-line;font-size: x-small; }
-  .after .left .note { margin-top: 10px; font-style: italic; font-weight: 400; font-weight: bold; color: #0300aa;}
+  .after .left .note { margin-top: 10px; font-style: italic; font-weight: 400;  font-weight: bold; color: #0300aa;}
   table.totals { flex: 0 0 54%; border-collapse: collapse; }
   table.totals td { padding: 6px 6px; font-weight: 700; border-top: 1px solid #e3e3e3; }
   table.totals td.r { text-align: right; white-space: nowrap; }
   table.totals tr.grand td { font-size: 14px; color: #111; border-top: 2px solid var(--accent); }
+  table.totals tr.remaining td { font-weight: 800; font-size: 14px; color: #111; border-top: 1px solid #bbb; }
   table.totals tr.muted td { font-weight: 600; color: #777; font-size: 12px; }
   .words { text-align: right; font-size: 11px; font-weight: 700; color: #666; margin-top: 8px; }
   .words b { display: block; font-size: 10.5px; }
@@ -100,7 +102,7 @@
 
   <table class="items">
     <thead><tr>
-      <th>Description</th><th>Quantité</th><th>Prix unitaire HT</th><th>Taxes</th><th>Montant HT</th><th>Montant TTC</th>
+      <th>Description</th><th>Quantité</th><th>Prix Unitaire HT</th><th>Taxes</th><th>Montant HT</th><th>Montant TTC</th>
     </tr></thead>
     <tbody>
     {% for r in doc.rows %}
@@ -121,7 +123,8 @@
   <div class="after">
     <div class="left">
       {% if doc.communication %}<div>Communication de paiement : {{ doc.communication }}</div>{% endif %}
-      {% if doc.note %}<div class="note">Note : {{ doc.note|linebreaksbr }}</div>{% endif %}
+      <!-- {% if doc.note %}<div class="note">Note : {{ doc.note|linebreaksbr }}</div>{% endif %} -->
+      {% if doc.remaining is not None %}<div class="note">Reste à payer (après retenue de l'AIB): {{ doc.remaining|money }} {{ doc.currency }}</div>{% endif %}
       {% if doc.company.footer_text %}<div class="legal">{{ doc.company.footer_text }}</div>{% endif %}
     </div>
     <div style="flex: 0 0 54%">
@@ -132,11 +135,14 @@
         {% endfor %}
         <tr><td>Total TTC</td><td class="r">{{ doc.totals.total_ttc|money }} {{ doc.currency }}</td></tr>
         {% if doc.aib_label %}
-        <tr><td>{{ doc.aib_label }} sur base HT{% if not doc.aib_added %} <span class="small">(à part, non inclus dans le total)</span>{% endif %}</td><td class="r">{{ doc.totals.aib_amount|money }} {{ doc.currency }}</td></tr>
+        <tr><td>{{ doc.aib_label }} sur base HT <span class="small">(à déduire, information client)</span></td><td class="r">− {{ doc.totals.aib_amount|money }} {{ doc.currency }}</td></tr>
         <tr class="grand"><td>Total à payer</td><td class="r">{{ doc.totals.total_payable|money }} {{ doc.currency }}</td></tr>
         {% else %}
         <tr class="grand"><td>Total</td><td class="r">{{ doc.totals.total_payable|money }} {{ doc.currency }}</td></tr>
         {% endif %}
+        <!-- {% if doc.remaining is not None %}
+        <tr class="remaining"><td>Reste à payer (après retenue de l'AIB)</td><td class="r">{{ doc.remaining|money }} {{ doc.currency }}</td></tr>
+        {% endif %} -->
       </table>
       <div class="words">Montant total en toutes lettres :<b>{{ doc.words }}</b></div>
     </div>

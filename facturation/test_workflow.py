@@ -203,26 +203,91 @@ class ConfirmTests(BaseCase):
 
 
 class AibTests(BaseCase):
-    def test_aib_3_et_8_calcules_sur_la_base_ht_et_affiches_a_part(self):
-        for code, expected in (("C", Decimal("3000")), ("D", Decimal("8000"))):
-            rows = [{"kind": "item", "name": "x", "quantity": "1", "unit_ht": "100000", "tax_group": "B"}]
-            self.client.post(self.editor, post_data(self.company, self.customer, rows=rows, action="draft", aib=code))
+    ROWS = [{"kind": "item", "name": "x", "quantity": "1", "unit_ht": "100000", "tax_group": "B"}]
+
+    def test_total_a_payer_est_ttc_moins_aib(self):
+        for code, aib in (("A", 1000), ("B", 5000), ("C", 3000), ("D", 8000)):
+            self.client.post(self.editor, post_data(self.company, self.customer, rows=self.ROWS,
+                                                    action="draft", aib=code))
             inv = Invoice.objects.latest("id")
-            self.assertEqual(inv.aib_amount, expected)
-            self.assertEqual(inv.total, Decimal("118000"))      # non ajouté au TTC par défaut
+            self.assertEqual(inv.aib_amount, Decimal(aib))
+            self.assertEqual(inv.total, Decimal("118000"))                 # TTC = total connu de la DGI
+            self.assertEqual(inv.net_payable, Decimal(118000 - aib))       # total à payer
 
     @mock.patch("facturation.views.EmcfClient")
-    def test_aib_sans_code_api_bloque_lenvoi_a_la_dgi(self, api):
-        self.client.post(self.editor, post_data(self.company, self.customer, action="confirm", aib="C"))
-        api.return_value.create.assert_not_called()
-        self.assertEqual(Invoice.objects.get().status, "draft")
-
-    @mock.patch("facturation.views.EmcfClient")
-    def test_aib_a_et_b_transmis_avec_leur_code(self, api):
-        api.return_value.create.return_value = {"uid": "u", "total": 274600}
+    def test_aib_jamais_transmis_a_la_dgi(self, api):
+        import itertools
+        counter = itertools.count(1)
+        api.return_value.create.side_effect = lambda payload: {"uid": f"u-{next(counter)}", "total": 118000}
         api.return_value.confirm.return_value = {"codeMECeFDGI": "X", "qrCode": ""}
-        self.client.post(self.editor, post_data(self.company, self.customer, action="confirm", aib="B"))
-        self.assertEqual(api.return_value.create.call_args[0][0]["aib"], "B")
+        for code in ("A", "B", "C", "D"):
+            self.client.post(self.editor, post_data(self.company, self.customer, rows=self.ROWS,
+                                                    action="confirm", aib=code))
+            payload = api.return_value.create.call_args[0][0]
+            self.assertNotIn("aib", payload)                                # ni code, ni montant
+            self.assertEqual(sum(p["amount"] for p in payload["payment"]), 118000)   # paiements = TTC DGI
+        self.assertEqual(Invoice.objects.filter(status="confirmed").count(), 4)
+
+    def test_impression_avec_aib(self):
+        rows = [{"kind": "item", "name": "x", "quantity": "1", "unit_ht": "152174", "tax_group": "B"}]
+        self.client.post(self.editor, post_data(self.company, self.customer, rows=rows, action="draft", aib="C"))
+        inv = Invoice.objects.latest("id")
+        self.assertEqual((inv.total_ht, inv.total_tax, inv.total, inv.aib_amount, inv.net_payable),
+                         (Decimal("152174"), Decimal("27391"), Decimal("179565"), Decimal("4565"), Decimal("175000")))
+        page = self.client.get(reverse("invoice_print", args=[inv.pk]))
+        self.assertContains(page, "AIB 3 %")
+        self.assertContains(page, "Total à payer")
+
+
+class RemainingShippingAndFontTests(BaseCase):
+    def test_reste_a_payer_affiche_seulement_sil_est_renseigne(self):
+        self.client.post(self.editor, post_data(self.company, self.customer, action="draft",
+                                                amount_remaining="50000"))
+        with_amount = Invoice.objects.latest("id")
+        self.assertEqual(with_amount.amount_remaining, Decimal("50000"))
+        self.assertContains(self.client.get(reverse("invoice_print", args=[with_amount.pk])), "Reste à payer")
+        self.client.post(self.editor, post_data(self.company, self.customer, action="draft"))
+        without = Invoice.objects.latest("id")
+        self.assertIsNone(without.amount_remaining)
+        self.assertNotContains(self.client.get(reverse("invoice_print", args=[without.pk])), "Reste à payer")
+
+    def test_reste_a_payer_modifiable_apres_confirmation(self):
+        inv = Invoice.objects.create(company=self.company, uid="c-1", status="confirmed", internal_number="FAC/2026/1")
+        self.client.post(reverse("invoice_edit", args=[inv.pk]),
+                         {"internal_number": "FAC/2026/1", "payment_communication": "", "note": "",
+                          "amount_remaining": "1234.50"})
+        inv.refresh_from_db()
+        self.assertEqual(inv.amount_remaining, Decimal("1234.50"))
+
+    def test_adresse_expedition_memorisee_dans_la_fiche_si_vide(self):
+        no_ship = ClientModel.objects.create(name="Sans adresse")
+        self.client.post(self.editor, post_data(self.company, no_ship, action="draft",
+                                                shipping_address="Zone industrielle, Cotonou"))
+        no_ship.refresh_from_db()
+        self.assertEqual(no_ship.shipping_address, "Zone industrielle, Cotonou")
+        # une adresse déjà présente dans la fiche n'est jamais écrasée
+        self.client.post(self.editor, post_data(self.company, self.customer, action="draft",
+                                                shipping_address="Adresse ponctuelle"))
+        self.customer.refresh_from_db()
+        self.assertEqual(self.customer.shipping_address, "Entrepôt 5, Port Louis")
+        self.assertEqual(Invoice.objects.latest("id").shipping_address, "Adresse ponctuelle")
+
+    def test_previsualisation_ne_modifie_pas_la_fiche_client(self):
+        no_ship = ClientModel.objects.create(name="Sans adresse")
+        self.client.post(self.editor, post_data(self.company, no_ship, action="preview",
+                                                shipping_address="Quelque part"))
+        no_ship.refresh_from_db()
+        self.assertEqual(no_ship.shipping_address, "")
+
+    def test_editeur_affiche_ladresse_de_la_fiche_du_client(self):
+        page = self.client.get(self.editor + f"?client={self.customer.pk}")
+        self.assertContains(page, "Entrepôt 5, Port Louis")
+        self.assertContains(page, 'id="ship-hint"')
+
+    def test_police_aptos_sur_tout_le_document(self):
+        resp = self.client.post(self.editor, post_data(self.company, self.customer, action="preview"))
+        self.assertContains(resp, "Aptos")
+        self.assertNotContains(resp, "Lato")
 
 
 class PaymentStatusTests(BaseCase):

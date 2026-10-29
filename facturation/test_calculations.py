@@ -103,15 +103,23 @@ class DocumentTests(unittest.TestCase):
         r = calc.compute_document([item("x", 1, 100, "E")], {**RATES, "E": 5})
         self.assertEqual(r["total_ttc"], D("105"))
 
-    def test_aib_base_ht_non_ajoute_par_defaut(self):
-        r = calc.compute_document([item("x", 1, 100000)], RATES, aib_rate=3)
-        self.assertEqual(r["aib_amount"], D("3000"))
-        self.assertEqual(r["total_payable"], D("118000"))   # TTC inchangé
+    def test_total_a_payer_est_ttc_moins_aib(self):
+        for rate, aib in ((3, D("3000")), (8, D("8000"))):
+            r = calc.compute_document([item("x", 1, 100000)], RATES, aib_rate=rate)
+            self.assertEqual(r["aib_amount"], aib)
+            self.assertEqual(r["total_ttc"], D("118000"))                 # TTC DGI inchangé
+            self.assertEqual(r["total_payable"], D("118000") - aib)       # net à payer
 
-    def test_aib_ajoute_si_regle_activee(self):
-        for rate, amount in ((3, D("3000")), (8, D("8000"))):
-            r = calc.compute_document([item("x", 1, 100000)], RATES, aib_rate=rate, aib_added=True)
-            self.assertEqual((r["aib_amount"], r["total_payable"]), (amount, D("118000") + amount))
+    def test_exemple_de_lecran_aib_3_pour_cent(self):
+        # HT 152 174 · taxe 27 391 · TTC 179 565 · AIB 3 % = 4 565 · à payer 175 000
+        r = calc.compute_document([item("x", 1, 152174)], RATES, aib_rate=3)
+        self.assertEqual((r["total_ht"], r["total_tax"], r["total_ttc"]),
+                         (D("152174"), D("27391"), D("179565")))
+        self.assertEqual((r["aib_amount"], r["total_payable"]), (D("4565"), D("175000")))
+
+    def test_sans_aib_a_payer_egal_ttc(self):
+        r = calc.compute_document([item("x", 1, 1000)], RATES)
+        self.assertEqual((r["aib_amount"], r["total_payable"]), (D("0"), r["total_ttc"]))
 
     def test_total_arrondi_au_franc(self):
         r = calc.compute_document([item("x", 1, D("100.50"))], RATES)  # 118,59

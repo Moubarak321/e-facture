@@ -91,8 +91,9 @@
 <div class="card-footer bg-white">
   <div class="d-flex flex-column align-items-end">
     <div>Total HT : <b>{{ doc.totals.total_ht|money }}</b> · Taxes : <b>{{ doc.totals.total_tax|money }}</b> · Total TTC : <b>{{ doc.totals.total_ttc|money }}</b> {{ doc.currency }}</div>
-    {% if doc.aib_label %}<div>{{ doc.aib_label }} : <b>{{ doc.totals.aib_amount|money }}</b> {{ doc.currency }}{% if not doc.aib_added %} <span class="text-muted small">(à part)</span>{% endif %}</div>{% endif %}
+    {% if doc.aib_label %}<div>{{ doc.aib_label }} (à déduire, non transmis à la DGI) : <b>− {{ doc.totals.aib_amount|money }}</b> {{ doc.currency }}</div>{% endif %}
     <div class="fs-5">Total à payer : <b>{{ doc.totals.total_payable|money }} {{ doc.currency }}</b></div>
+    {% if doc.remaining is not None %}<div class="fs-5">Reste à payer : <b>{{ doc.remaining|money }} {{ doc.currency }}</b></div>{% endif %}
   </div>
 </div></div>
 

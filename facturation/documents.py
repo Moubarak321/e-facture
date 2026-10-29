@@ -10,7 +10,8 @@ from .numwords import amount_in_words
 
 
 def _document(*, company, type_code, number, proforma, banner, banner_class, invoice_date, due_date,
-              client, shipping_address, result, aib_code, communication, note, security=None):
+              client, shipping_address, result, aib_code, communication, note, remaining=None,
+              security=None):
     credit = type_code in ("FA", "EA")
     kind = "Avoir" if credit else "Facture"
     aib_label = conf.aib_definitions().get(aib_code, {}).get("label", "") if aib_code else ""
@@ -29,7 +30,7 @@ def _document(*, company, type_code, number, proforma, banner, banner_class, inv
         "tax_summary": result["tax_summary"],
         "totals": result,
         "aib_label": aib_label,
-        "aib_added": conf.AIB_ADDED_TO_TOTAL,
+        "remaining": remaining,                # « Reste à payer » saisi par l'émetteur (ou None)
         "words": amount_in_words(result["total_payable"], conf.CURRENCY_WORDS),
         "currency": conf.CURRENCY_SYMBOL,
         "communication": communication,
@@ -60,7 +61,8 @@ def doc_from_invoice(invoice):
         client={"name": invoice.client_name, "ifu": invoice.client_ifu,
                 "contact": invoice.client_contact, "address": invoice.client_address},
         shipping_address=invoice.shipping_address, result=invoice.compute(), aib_code=invoice.aib,
-        communication=invoice.payment_communication, note=invoice.note, security=security,
+        communication=invoice.payment_communication, note=invoice.note,
+        remaining=invoice.amount_remaining, security=security,
     )
 
 
@@ -74,5 +76,5 @@ def doc_from_form(company, client, data, result):
                 "contact": client.contact if client else "", "address": client.address if client else ""},
         shipping_address=data.get("shipping_address", ""), result=result, aib_code=data.get("aib"),
         communication=(data.get("payment_communication") or "").strip(),
-        note=data.get("note", ""),
+        note=data.get("note", ""), remaining=data.get("amount_remaining"),
     )

@@ -125,6 +125,7 @@ def _initial_from_invoice(invoice, credit_note=False):
         "invoice_date": invoice.invoice_date, "due_date": invoice.due_date,
         "payment_status": invoice.payment_status, "internal_number": invoice.internal_number,
         "payment_communication": invoice.payment_communication, "note": invoice.note,
+        "amount_remaining": invoice.amount_remaining,
     }
     items_initial = []
     for it in invoice.items.all():
@@ -155,7 +156,6 @@ def _editor_response(request, form, items, pays, invoice=None):
         "tax_labels": dict(TAX_GROUPS),
         "unverified_groups": ["C", "D", "E", "F"],
         "aib_rates": {code: d["rate"] for code, d in conf.aib_definitions().items()},
-        "aib_added": conf.AIB_ADDED_TO_TOTAL,
         "client_shipping": {str(c.pk): c.shipping_address for c in Client.objects.all()},
     })
 
@@ -187,12 +187,17 @@ def _save_invoice(invoice, d, result, pay_rows, user):
         invoice.invoice_date, invoice.due_date = d["invoice_date"], d["due_date"]
         invoice.payment_status = d["payment_status"]
         invoice.shipping_address = d["shipping_address"]
+        invoice.amount_remaining = d["amount_remaining"]
+        # Le client n'avait pas d'adresse d'expédition : celle saisie ici est mémorisée dans sa fiche.
+        if client and d["shipping_address"].strip() and not client.shipping_address.strip():
+            client.shipping_address = d["shipping_address"].strip()
+            client.save(update_fields=["shipping_address"])
         invoice.client_name = client.name if client else ""
         invoice.client_ifu = client.ifu if client else ""
         invoice.client_contact = client.contact if client else ""
         invoice.client_address = client.address if client else ""
         invoice.total_ht, invoice.total_tax = result["total_ht"], result["total_tax"]
-        invoice.aib_amount, invoice.total = result["aib_amount"], result["total_payable"]
+        invoice.aib_amount, invoice.total = result["aib_amount"], result["total_ttc"]
         invoice.save()
         invoice.items.all().delete()
         position = 0
@@ -220,16 +225,6 @@ def _submit_and_confirm(request, invoice):
     """
     company = invoice.company
     result = invoice.compute()
-    aib_def = conf.aib_definitions().get(invoice.aib) if invoice.aib else None
-    if invoice.aib and not (aib_def and aib_def.get("api")):
-        label = aib_def["label"] if aib_def else invoice.aib
-        messages.error(
-            request,
-            f"« {label} » n'a pas de code correspondant dans l'API e-MCF : la facture reste en brouillon. "
-            "Renseignez le code API dans le paramètre EMCF_AIB (config/settings.py) ou choisissez un autre AIB.",
-        )
-        return False
-
     claimed = Invoice.objects.filter(pk=invoice.pk, status=Invoice.Status.DRAFT).update(
         status=Invoice.Status.PENDING
     )
@@ -242,7 +237,8 @@ def _submit_and_confirm(request, invoice):
 
     data = {"type": invoice.type, "client_name": invoice.client_name, "client_ifu": invoice.client_ifu,
             "client_contact": invoice.client_contact, "client_address": invoice.client_address,
-            "aib": aib_def["api"] if aib_def else "", "reference": invoice.reference}
+            "aib": "",  # l'AIB est une information client : jamais transmis à l'API e-MCF
+            "reference": invoice.reference}
     lines = [{"name": r["name"], "price": r["unit_ttc"], "quantity": r["quantity"],
               "tax_group": r["tax_group"]} for r in result["rows"] if r["kind"] == "item"]
     payments = [{"method": p.method, "amount": p.amount} for p in invoice.payments.all()]
@@ -341,8 +337,7 @@ def invoice_editor(request, pk=None):
     company, client = d["company"], d["client"]
     rows = _rows_from_formset(items)
     result = calc.compute_document(
-        rows, conf.tax_rates(), aib_rate=conf.aib_rate(d["aib"]),
-        aib_added=conf.AIB_ADDED_TO_TOTAL, tax_labels=dict(TAX_GROUPS),
+        rows, conf.tax_rates(), aib_rate=conf.aib_rate(d["aib"]), tax_labels=dict(TAX_GROUPS),
     )
 
     if action == "preview":  # proforma : rien n'est enregistré, aucun statut n'est modifié
@@ -353,7 +348,7 @@ def invoice_editor(request, pk=None):
     if action == "confirm":
         if result["item_count"] < 1:
             problems.append("Ajoutez au moins une ligne d'article avant de confirmer.")
-        if result["total_payable"] <= 0:
+        if result["total_ttc"] <= 0:
             problems.append("Le total de la facture doit être supérieur à 0.")
         if not company.ifu:
             problems.append(f"Renseignez d'abord l'IFU de la société « {company.name} ».")
@@ -365,12 +360,12 @@ def invoice_editor(request, pk=None):
     ]
     if pay_rows and action == "confirm":
         paid = sum((p["amount"] for p in pay_rows), Decimal(0))
-        if paid != result["total_payable"]:
+        if paid != result["total_ttc"]:
             problems.append(
-                f"La somme des paiements ({paid}) doit être égale au total de la facture ({result['total_payable']})."
+                f"La somme des paiements ({paid}) doit être égale au total TTC de la facture ({result['total_ttc']})."
             )
     elif not pay_rows and action == "confirm":
-        pay_rows = [{"method": "ESPECES", "amount": result["total_payable"]}]
+        pay_rows = [{"method": "ESPECES", "amount": result["total_ttc"]}]
     if problems:
         for text in problems:
             messages.error(request, text)
@@ -591,6 +586,7 @@ def invoice_edit(request, pk):
         "internal_number": invoice.internal_number,
         "payment_communication": invoice.payment_communication,
         "note": invoice.note,
+        "amount_remaining": invoice.amount_remaining,
     }
     form = InvoiceInfoForm(request.POST or None, invoice=invoice, initial=initial)
     if request.method == "POST" and form.is_valid():
@@ -598,7 +594,8 @@ def invoice_edit(request, pk):
         invoice.internal_number = d["internal_number"]
         invoice.payment_communication = d["payment_communication"]
         invoice.note = d["note"]
-        invoice.save(update_fields=["internal_number", "payment_communication", "note"])
+        invoice.amount_remaining = d["amount_remaining"]
+        invoice.save(update_fields=["internal_number", "payment_communication", "note", "amount_remaining"])
         messages.success(request, "Facture mise à jour.")
         return redirect("invoice_detail", pk=pk)
     return render(request, "facturation/invoice_edit.html", {"form": form, "invoice": invoice})

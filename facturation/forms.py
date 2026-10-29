@@ -153,6 +153,10 @@ class InvoiceForm(BootstrapMixin, forms.Form):
     note = forms.CharField(
         label="Note", required=False, widget=forms.Textarea(attrs={"rows": 2})
     )
+    amount_remaining = forms.DecimalField(
+        label="Reste à payer", required=False, min_value=Decimal(0), decimal_places=2, max_digits=16,
+        widget=forms.NumberInput(attrs={"step": "0.01"}),
+    )
 
     def __init__(self, *args, invoice_pk=None, **kwargs):
         self.invoice_pk = invoice_pk  # facture (brouillon) en cours d'édition, exclue des contrôles d'unicité
@@ -240,6 +244,10 @@ class InvoiceInfoForm(BootstrapMixin, forms.Form):
         label="Communication de paiement", required=False, max_length=200
     )
     note = forms.CharField(label="Note", required=False, widget=forms.Textarea(attrs={"rows": 3}))
+    amount_remaining = forms.DecimalField(
+        label="Reste à payer", required=False, min_value=Decimal(0), decimal_places=2, max_digits=16,
+        help_text="Montant libre affiché après les totaux (laisser vide pour ne rien afficher).",
+    )
 
     def __init__(self, *args, invoice, **kwargs):
         self.invoice = invoice
