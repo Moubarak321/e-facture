@@ -290,6 +290,84 @@ class RemainingShippingAndFontTests(BaseCase):
         self.assertNotContains(resp, "Lato")
 
 
+class PrintModesTests(BaseCase):
+    """Trois vues d'un même document : facture normalisée, proforma, facture sans mention proforma."""
+
+    def confirmed(self):
+        inv = Invoice.objects.create(
+            company=self.company, uid="c-9", status="confirmed", internal_number="FAC/2026/00009",
+            client_name="UPL MAURICE",
+            security={"codeMECeFDGI": "AAAA-BBBB-CCCC", "nim": "EM01",
+                      "qrCode": "F;EM01;AAAA;3201642618813;20261001120000"})
+        InvoiceItem.objects.create(invoice=inv, name="Prestation", price=Decimal("118000"), quantity=1, tax_group="B")
+        return inv
+
+    def page(self, inv, mode=None):
+        url = reverse("invoice_print", args=[inv.pk]) + (f"?mode={mode}" if mode else "")
+        return self.client.get(url)
+
+    def test_brouillon_est_une_proforma_par_defaut(self):
+        _, inv = self.save_draft()
+        page = self.page(inv)
+        self.assertContains(page, "PROFORMA")
+        self.assertContains(page, "Facture proforma")
+
+    def test_brouillon_en_facture_sans_aucune_mention_proforma(self):
+        _, inv = self.save_draft()
+        page = self.page(inv, "facture")
+        self.assertNotContains(page, "PROFORMA")
+        self.assertNotContains(page, "Facture proforma")
+        self.assertContains(page, "A — PORTAGE SALARIAL")
+        self.assertNotContains(page, "Éléments de sécurité")        # pas de faux éléments DGI
+        self.assertContains(page, "pas confirmée")                  # avertissement à l'écran seulement
+
+    def test_facture_en_attente_sans_mention_proforma(self):
+        inv = Invoice.objects.create(company=self.company, uid="p-1", status="pending", internal_number="FAC/2026/00005")
+        InvoiceItem.objects.create(invoice=inv, name="Prestation", price=Decimal("1180"), quantity=1, tax_group="B")
+        page = self.page(inv)
+        self.assertNotContains(page, "PROFORMA")
+        self.assertContains(page, "Facture FAC/2026/00005")
+
+    def test_facture_confirmee_normalisee_avec_elements_dgi(self):
+        inv = self.confirmed()
+        for page in (self.page(inv), self.page(inv, "facture")):
+            self.assertContains(page, "AAAA-BBBB-CCCC")
+            self.assertContains(page, "Éléments de sécurité")
+            self.assertNotContains(page, "PROFORMA")
+
+    def test_proforma_dune_facture_confirmee_masque_les_elements_dgi(self):
+        inv = self.confirmed()
+        page = self.page(inv, "proforma")
+        self.assertContains(page, "PROFORMA")
+        self.assertNotContains(page, "AAAA-BBBB-CCCC")
+
+    def test_mode_inconnu_ignore(self):
+        inv = self.confirmed()
+        self.assertContains(self.page(inv, "n-importe-quoi"), "AAAA-BBBB-CCCC")
+
+    def test_apercu_facture_depuis_lediteur_sans_effet_de_bord(self):
+        resp = self.client.post(self.editor, post_data(self.company, self.customer, action="preview_invoice"))
+        self.assertEqual(resp.status_code, 200)
+        self.assertNotContains(resp, "PROFORMA")
+        self.assertNotContains(resp, "Facture proforma")
+        self.assertContains(resp, "A — PORTAGE SALARIAL")
+        self.assertContains(resp, "Confirmer la facture")            # avertissement à l'écran
+        self.assertEqual(Invoice.objects.count(), 0)
+
+    def test_selecteur_de_version_et_titre_pdf(self):
+        inv = self.confirmed()
+        page = self.page(inv)
+        self.assertContains(page, "?mode=proforma")
+        self.assertContains(page, "<title>Facture FAC-2026-00009</title>")
+
+    def test_code_client_absent_des_trois_versions(self):
+        _, inv = self.save_draft()
+        for mode in ("proforma", "facture", None):
+            self.assertNotContains(self.page(inv, mode), "CLI-SECRET-42")
+        resp = self.client.post(self.editor, post_data(self.company, self.customer, action="preview_invoice"))
+        self.assertNotContains(resp, "CLI-SECRET-42")
+
+
 class PaymentStatusTests(BaseCase):
     def test_quatre_statuts_et_independance_du_statut_documentaire(self):
         _, inv = self.save_draft()

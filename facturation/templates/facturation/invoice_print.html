@@ -2,7 +2,7 @@
 <html lang="fr">
 <head>
 <meta charset="utf-8">
-<title>{{ doc.title }} {{ doc.number }}</title>
+<title>{{ doc.file_title }}</title>
 <style>
   :root { --accent: {{ doc.company.accent_color }}; --label: {{ doc.company.secondary_color }}; --section-bg: #dcdde0; --section-text: #755a7a; --stripe: #f6f5f5; --text: #4a4a4a; }
   * { box-sizing: border-box; }
@@ -55,14 +55,21 @@
   .banner { padding: 8px; text-align: center; font-weight: 700; margin: 12px 0 0; border: 2px solid #e0a800; background: #fff3cd; color: #6b5200; }
   .banner.cancelled { background: #f8d7da; border-color: #c82333; color: #721c24; }
   .wm { position: fixed; top: 38%; left: 0; right: 0; text-align: center; font-size: 120px; font-weight: 900; color: rgba(200, 0, 0, .07); transform: rotate(-28deg); pointer-events: none; z-index: 5; letter-spacing: 10px; }
-  .toolbar { text-align: center; padding: 10px; }
+  .toolbar { text-align: center; padding: 10px; font-size: 13px; }
+  .toolbar a { display: inline-block; margin: 0 4px; padding: 5px 12px; border: 1px solid #888; border-radius: 4px; color: #222; text-decoration: none; background: #fff; }
+  .toolbar a.on { background: #222; color: #fff; border-color: #222; }
+  .toolbar .notice { max-width: 210mm; margin: 8px auto 0; padding: 7px 10px; background: #fff3cd; border: 1px solid #e0a800; color: #6b5200; border-radius: 4px; }
   @page { size: A4; margin: 10mm 0; @bottom-center { content: "Page : " counter(page) " sur " counter(pages); font-size: 10px; color: #777; } }
   @media print { body { background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; } .sheet { margin: 0; width: auto; padding: 0 14mm; } .toolbar { display: none; } }
 </style>
 </head>
 <body>
-<div class="toolbar"><button onclick="window.print()">Imprimer / Enregistrer en PDF</button>
-  {% if doc.proforma %}<button onclick="window.close()">Fermer</button>{% endif %}</div>
+<div class="toolbar">
+  {% if modes %}{% for m in modes %}<a href="?mode={{ m.key }}" class="{% if m.active %}on{% endif %}">{{ m.label }}</a>{% endfor %}&nbsp;{% endif %}
+  <button onclick="window.print()">Imprimer / Enregistrer en PDF</button>
+  {% if doc.preview %}<button onclick="window.close()">Fermer</button>{% endif %}
+  {% if doc.notice %}<div class="notice">{{ doc.notice }}</div>{% endif %}
+</div>
 {% if doc.proforma %}<div class="wm">PROFORMA</div>{% endif %}
 <div class="sheet">
 <table class="layout">

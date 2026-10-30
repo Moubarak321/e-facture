@@ -340,9 +340,11 @@ def invoice_editor(request, pk=None):
         rows, conf.tax_rates(), aib_rate=conf.aib_rate(d["aib"]), tax_labels=dict(TAX_GROUPS),
     )
 
-    if action == "preview":  # proforma : rien n'est enregistré, aucun statut n'est modifié
+    if action in ("preview", "preview_invoice"):
+        # Aperçu seul : rien n'est enregistré, aucun statut n'est modifié, aucune fiche client n'est touchée.
+        mode = "proforma" if action == "preview" else "facture"
         return render(request, "facturation/invoice_print.html",
-                      {"doc": documents.doc_from_form(company, client, d, result), "qr": None})
+                      {"doc": documents.doc_from_form(company, client, d, result, mode), "qr": None, "modes": None})
 
     problems = []
     if action == "confirm":
@@ -477,9 +479,15 @@ def invoice_payment(request, pk):
 @login_required
 def invoice_print(request, pk):
     invoice = get_object_or_404(Invoice, pk=pk)
+    doc = documents.doc_from_invoice(invoice, request.GET.get("mode"))   # ?mode=facture | proforma
+    modes = [
+        {"key": "facture", "active": doc["mode"] == "facture",
+         "label": "Facture normalisée (DGI)" if invoice.security else "Facture (sans mention proforma)"},
+        {"key": "proforma", "active": doc["mode"] == "proforma", "label": "Proforma"},
+    ]
     return render(request, "facturation/invoice_print.html", {
-        "doc": documents.doc_from_invoice(invoice),
-        "qr": _qr_data_uri(invoice.qr_text),
+        "doc": doc, "modes": modes,
+        "qr": _qr_data_uri(invoice.qr_text) if doc["security"] else None,
     })
 
 

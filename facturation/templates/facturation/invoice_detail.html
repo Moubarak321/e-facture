@@ -9,13 +9,15 @@
   <div class="d-flex flex-wrap gap-2">
     {% if invoice.is_draft %}
     <a class="btn btn-primary" href="{% url 'invoice_draft_edit' invoice.pk %}">Modifier le brouillon</a>
-    <a class="btn btn-outline-dark" target="_blank" href="{% url 'invoice_print' invoice.pk %}">Prévisualiser (proforma)</a>
+    <a class="btn btn-outline-dark" target="_blank" href="{% url 'invoice_print' invoice.pk %}?mode=proforma">Proforma</a>
+    <a class="btn btn-outline-dark" target="_blank" href="{% url 'invoice_print' invoice.pk %}?mode=facture">Facture (sans mention proforma)</a>
     <form method="post" action="{% url 'invoice_delete' invoice.pk %}"
           onsubmit="return confirm('Supprimer définitivement ce brouillon ?');">{% csrf_token %}
       <button class="btn btn-outline-danger">Supprimer le brouillon</button></form>
     {% else %}
     <a class="btn btn-outline-secondary" href="{% url 'invoice_edit' invoice.pk %}">Modifier n° / note</a>
-    <a class="btn btn-outline-dark" target="_blank" href="{% url 'invoice_print' invoice.pk %}">Imprimer / PDF</a>
+    <a class="btn btn-outline-dark" target="_blank" href="{% url 'invoice_print' invoice.pk %}?mode=facture">{% if invoice.security %}Facture normalisée / PDF{% else %}Facture (sans mention proforma){% endif %}</a>
+    <a class="btn btn-outline-dark" target="_blank" href="{% url 'invoice_print' invoice.pk %}?mode=proforma">Proforma</a>
     {% if invoice.uid %}
     <form method="post" action="{% url 'invoice_refresh' invoice.pk %}">{% csrf_token %}
       <button class="btn btn-outline-secondary">Actualiser depuis l'API</button></form>
